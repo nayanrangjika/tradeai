@@ -23,24 +23,52 @@ const ANGEL_BASE_URL = "https://apiconnect.angelbroking.com";
 
 // --- CACHE FOR TOKENS ---
 let SCRIP_MASTER_CACHE: any[] = [];
+let EQUITY_CACHE_NSE: any[] = []; // Optimization: Pre-filtered list
+let scripLoadingPromise: Promise<void> | null = null;
 const SCRIP_URL = 'https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json';
 
-// --- HELPER: FETCH SCRIP MASTER ---
+// --- HELPER: FETCH SCRIP MASTER (SINGLETON) ---
 async function loadScripMaster() {
+    // If already loaded, return
     if (SCRIP_MASTER_CACHE.length > 0) return;
-    console.log("📥 Downloading Angel One Scrip Master...");
-    try {
-        const { data } = await axios.get(SCRIP_URL);
-        SCRIP_MASTER_CACHE = data;
-        console.log(`✅ Loaded ${SCRIP_MASTER_CACHE.length} scrips.`);
-    } catch (e: any) {
-        console.error("❌ Failed to load Scrip Master:", e.message);
+    
+    // If loading is in progress, wait for it
+    if (scripLoadingPromise) {
+        return scripLoadingPromise;
     }
+
+    console.log("📥 Downloading Angel One Scrip Master...");
+    scripLoadingPromise = (async () => {
+        try {
+            const { data } = await axios.get(SCRIP_URL, { timeout: 30000 }); // 30s timeout for large file
+            if (Array.isArray(data) && data.length > 0) {
+                SCRIP_MASTER_CACHE = data;
+                
+                // Pre-filter for NSE Equities ending in -EQ for faster random sampling
+                EQUITY_CACHE_NSE = data.filter((item: any) => 
+                    item.exch_seg === 'NSE' && 
+                    item.symbol.endsWith('-EQ') && 
+                    !item.symbol.includes('TEST')
+                );
+
+                console.log(`✅ Loaded ${SCRIP_MASTER_CACHE.length} total scrips.`);
+                console.log(`✅ Cached ${EQUITY_CACHE_NSE.length} NSE Equities.`);
+            } else {
+                console.warn("⚠️ Scrip Master downloaded but empty/invalid format.");
+            }
+        } catch (e: any) {
+            console.error("❌ Failed to load Scrip Master:", e.message);
+        } finally {
+            scripLoadingPromise = null;
+        }
+    })();
+
+    return scripLoadingPromise;
 }
 
 // --- ROUTE 0: HEALTH CHECK ---
 app.get('/api/health', (req, res) => {
-    res.json({ status: true, message: "Bridge Online" });
+    res.json({ status: true, message: "Bridge Online", scripsLoaded: SCRIP_MASTER_CACHE.length });
 });
 
 // --- ROUTE 1: LOGIN ---
@@ -94,24 +122,75 @@ app.post('/api/login', async (req, res) => {
 // --- ROUTE 2: TOKEN LOOKUP ---
 app.post('/api/token', async (req, res) => {
     const { symbol, exchange = 'NSE' } = req.body;
-    await loadScripMaster(); // Ensure cache is loaded
+    
+    // Ensure cache is loaded before searching
+    await loadScripMaster();
 
-    const scrip = SCRIP_MASTER_CACHE.find((item: any) => 
-        item.symbol === symbol && item.exch_seg === exchange
+    if (SCRIP_MASTER_CACHE.length === 0) {
+        return res.status(503).json({ message: "Scrip Master not ready yet" });
+    }
+
+    const cleanSymbol = symbol.toUpperCase();
+
+    // 1. Exact Match
+    let scrip = SCRIP_MASTER_CACHE.find((item: any) => 
+        item.symbol === cleanSymbol && item.exch_seg === exchange
     );
 
+    // 2. Fuzzy Match (Try removing or adding '-EQ')
+    if (!scrip) {
+        const altSymbol = cleanSymbol.endsWith('-EQ') ? cleanSymbol.replace('-EQ', '') : cleanSymbol + '-EQ';
+        scrip = SCRIP_MASTER_CACHE.find((item: any) => 
+            item.symbol === altSymbol && item.exch_seg === exchange
+        );
+    }
+
     if (scrip) {
-        console.log(`🔍 Found Token: ${symbol} -> ${scrip.token}`);
+        console.log(`🔍 Found Token: ${cleanSymbol} -> ${scrip.token}`);
         res.json({ token: scrip.token, symbol: scrip.symbol, name: scrip.name });
     } else {
-        res.status(404).json({ message: "Stock not found in master list" });
+        console.warn(`❌ Token Not Found: ${cleanSymbol} [${exchange}]`);
+        // Return 404 but with JSON so frontend handles it gracefully
+        res.status(404).json({ message: "Stock not found in master list", symbol });
     }
+});
+
+// --- ROUTE 2.5: RANDOM STOCKS FOR SCANNER ---
+app.get('/api/stocks/random', async (req, res) => {
+    await loadScripMaster();
+    
+    if (EQUITY_CACHE_NSE.length === 0) {
+        return res.status(503).json({ message: "Master list loading..." });
+    }
+
+    const limit = parseInt(req.query.limit as string) || 12;
+    const randomStocks = [];
+    const usedIndices = new Set();
+    const max = EQUITY_CACHE_NSE.length;
+
+    // Pick 'limit' random stocks
+    while(randomStocks.length < limit && usedIndices.size < max) {
+        const idx = Math.floor(Math.random() * max);
+        if (!usedIndices.has(idx)) {
+            usedIndices.add(idx);
+            randomStocks.push({
+                symbol: EQUITY_CACHE_NSE[idx].symbol,
+                token: EQUITY_CACHE_NSE[idx].token
+            });
+        }
+    }
+
+    res.json(randomStocks);
 });
 
 // --- ROUTE 3: LIVE PRICE (LTP) ---
 app.post('/api/ltp', async (req, res) => {
     const { token, symbol, jwt, apiKey } = req.body;
     
+    if (!token || token === "0" || token === "undefined") {
+        return res.status(400).json({ message: "Invalid Token" });
+    }
+
     const headers = {
         'Authorization': `Bearer ${jwt}`,
         'Content-Type': 'application/json',
@@ -128,7 +207,7 @@ app.post('/api/ltp', async (req, res) => {
         const response = await axios.post(`${ANGEL_BASE_URL}/rest/market/data/v1/ltp`, {
             exchange: "NSE",
             tradingsymbol: symbol,
-            symboltoken: token
+            symboltoken: String(token)
         }, { headers });
 
         res.json(response.data);
@@ -141,6 +220,12 @@ app.post('/api/ltp', async (req, res) => {
 // --- ROUTE 4: HISTORICAL DATA ---
 app.post('/api/history', async (req, res) => {
     const { token, interval, fromdate, todate, jwt, apiKey } = req.body;
+
+    // VALIDATION: Prevent 500s by checking token before sending
+    if (!token || token === "0" || token === "undefined" || token === "null") {
+        console.warn("⚠️ Rejected History Request: Invalid Token");
+        return res.status(400).json({ message: "Invalid Token provided for history" });
+    }
 
     const headers = {
         'Authorization': `Bearer ${jwt}`,
@@ -155,7 +240,6 @@ app.post('/api/history', async (req, res) => {
     };
 
     try {
-        // Crucial Fix: symboltoken must be String. Axios might pass number if not cast.
         const payload = {
             exchange: "NSE",
             symboltoken: String(token), 
@@ -187,6 +271,6 @@ app.get('*', (req, res) => {
 
 app.listen(Number(PORT), '0.0.0.0', () => {
     console.log(`✅ Production Server running on port ${PORT}`);
-    // Pre-load scrip master on start to reduce latency
+    // Trigger download immediately on start
     loadScripMaster();
 });

@@ -8,21 +8,99 @@ export const API_KEYS = {
   MARKET_SECRET: 'c1c3127a-86ea-42a1-aa9c-cbb4db177ffa'
 };
 
+// Default high-cap list for "Top Performers" UI. 
 export const WORLD_STOCKS = [
-  // Indian Giants (NSE) - Top Liquid Stocks
-  { symbol: 'RELIANCE-EQ', token: '2885', base: 2980, region: 'IN' },
-  { symbol: 'TCS-EQ', token: '11536', base: 4120, region: 'IN' },
-  { symbol: 'HDFCBANK-EQ', token: '1333', base: 1740, region: 'IN' },
-  { symbol: 'SBIN-EQ', token: '3045', base: 780, region: 'IN' },
-  { symbol: 'INFY-EQ', token: '1594', base: 1850, region: 'IN' },
-  { symbol: 'ICICIBANK-EQ', token: '4963', base: 1250, region: 'IN' },
-  { symbol: 'TATAMOTORS-EQ', token: '3456', base: 980, region: 'IN' },
-  { symbol: 'ITC-EQ', token: '1660', base: 430, region: 'IN' },
-  { symbol: 'SWIGGY-EQ', token: '13781', base: 508.45, region: 'IN' }, 
-  { symbol: 'BHARTIARTL-EQ', token: '10604', base: 1400, region: 'IN' }
+  { symbol: 'RELIANCE-EQ', token: '2885', base: 2350.00, region: 'IN' },
+  { symbol: 'TCS-EQ', token: '11536', base: 3400.00, region: 'IN' },
+  { symbol: 'HDFCBANK-EQ', token: '1333', base: 1600.00, region: 'IN' },
+  { symbol: 'INFY-EQ', token: '1594', base: 1400.00, region: 'IN' },
+  { symbol: 'ITC-EQ', token: '1660', base: 400.00, region: 'IN' },
+  { symbol: 'SBIN-EQ', token: '3045', base: 570.00, region: 'IN' },
+  { symbol: 'BHARTIARTL-EQ', token: '10604', base: 850.00, region: 'IN' },
+  { symbol: 'TATAMOTORS-EQ', token: '3456', base: 600.00, region: 'IN' },
+  { symbol: 'SWIGGY-EQ', token: '13781', base: 450.00, region: 'IN' },
+  { symbol: 'ZOMATO-EQ', token: '5097', base: 150.00, region: 'IN' }
 ];
 
 export const NIFTY_50_STOCKS = WORLD_STOCKS;
+
+// The Specific "Target List" provided by User (Blue Chips & Sector Leaders)
+export const TARGET_SYMBOLS = [
+    // --- NIFTY 50 (CORE) ---
+    "RELIANCE", "HDFCBANK", "ICICIBANK", "INFY", "ITC", "TCS", "LT", "AXISBANK",
+    "SBIN", "BHARTIARTL", "KOTAKBANK", "BAJFINANCE", "HINDUNILVR", "M&M", "MARUTI",
+    "TITAN", "SUNPHARMA", "ASIANPAINT", "HCLTECH", "TATASTEEL", "NTPC", "POWERGRID",
+    "ULTRACEMCO", "TATAMOTORS", "INDUSINDBK", "BAJAJFINSV", "NESTLEIND", "ONGC",
+    "ADANIENT", "JSWSTEEL", "GRASIM", "TECHM", "HINDALCO", "ADANIPORTS", "WIPRO",
+    "CIPLA", "TATACONSUM", "COALINDIA", "SBILIFE", "BRITANNIA", "DRREDDY",
+    "EICHERMOT", "DIVISLAB", "APOLLOHOSP", "BAJAJ-AUTO", "HEROMOTOCO", "UPL", "LTIM",
+    
+    // --- BANKING & FINANCE ---
+    "AUBANK", "BANDHANBNK", "BANKBARODA", "BANKINDIA", "CANBK", "CUB", "FEDERALBNK",
+    "IDFCFIRSTB", "PNB", "RBLBANK", "IDBI", "INDIANB", "MAHABANK", "UNIONBANK", "YESBANK",
+    "ABCAPITAL", "ANGELONE", "BAJAJHLDNG", "CANFINHOME", "CHOLAFIN", "CREDITACC",
+    "HDFCAMC", "HDFCLIFE", "ICICIGI", "ICICIPRULI", "L&TFH", "LICHSGFIN", "LICI",
+    "M&MFIN", "MANAPPURAM", "MFSL", "MUTHOOTFIN", "NAM-INDIA", "PAYTM", "PFC",
+    "PIIND", "POONAWALLA", "RECLTD", "SBICARD", "SHRIRAMFIN", "SUNDARMFIN",
+    
+    // --- AUTO & ANCILLARIES ---
+    "AMARAJABAT", "APOLLOTYRE", "ASHOKLEY", "BALKRISIND", "BHARATFORG", "BOSCHLTD",
+    "EXIDEIND", "MRF", "MOTHERSON", "SONACOMS", "TVSMOTOR", "TIINDIA", "UNO_MINDA",
+    "ESCORTS", "CUMMINSIND", "ENDURANCE", "SCHAEFFLER", "SONABLW",
+    
+    // --- IT & TECHNOLOGY ---
+    "COFORGE", "CYIENT", "DIXON", "HAPPSTMNDS", "INTELLECT", "KPITTECH", "L&T_TECH",
+    "MASTEK", "MPHASIS", "NAUKRI", "OFSS", "PERSISTENT", "POLICYBZR", "ROUTE",
+    "SONATSOFTW", "SYNGENE", "TATAELXSI", "TEJASNET", "ZENSARTECH", "ZOMATO",
+    
+    // --- PHARMA & HEALTHCARE ---
+    "ABBOTINDIA", "ALKEM", "AUROPHARMA", "BIOCON", "GLENMARK", "GRANULES", "GSK",
+    "IPCALAB", "JBCHEPHARM", "LALPATHLAB", "LAURUSLAB", "LUPIN", "MANKIND", "MAXHEALTH",
+    "METROPOLIS", "NATCOPHARM", "PFIZER", "SYNGENE", "TORNTPHARM", "ZYDUSLIFE",
+    "FORTIS", "ASTERDM", "NH",
+    
+    // --- ENERGY, OIL & GAS ---
+    "ADANIGREEN", "ADANIPOWER", "ATGL", "BPCL", "CASTROLIND", "GAIL", "GUJGASLTD",
+    "HINDPETRO", "IGL", "IOC", "MGL", "MRPL", "OIL", "PETRONET", "RELIANCE",
+    "SJVN", "TATAPOWER", "TORNTPOWER", "NHPC", "IEX",
+    
+    // --- CONSUMER GOODS (FMCG) ---
+    "BALRAMCHIN", "BATAINDIA", "BERGERPAINT", "COLPAL", "DABUR", "EMAMILTD",
+    "GODREJCP", "HATSUN", "HINDUNILVR", "ITC", "JYOTHYLAB", "KRBL", "MARICO",
+    "NESTLEIND", "PAGEIND", "PATANJALI", "PGHH", "RADICO", "RELAXO", "TATA_CONSUM",
+    "TTKPRESTIGE", "UBL", "UNITEDSPR", "VBL", "VARROC", "WHIRLPOOL",
+    
+    // --- METALS & MINING ---
+    "APLAPOLLO", "HINDCOPPER", "HINDZINC", "JINDALSTEL", "JSL", "NATIONALUM",
+    "NMDC", "RATNAMANI", "SAIL", "TATASTEEL", "VEDL", "WELCORP",
+    
+    // --- CEMENT & CONSTRUCTION ---
+    "ACC", "AMBUJACEM", "BIRLACORPN", "DALBHARAT", "GRASIM", "JKCEMENT",
+    "RAMCOCEM", "SHREECEM", "STARCEMENT", "ULTRACEMCO",
+    "DLF", "GODREJPROP", "LODHA", "OBEROIRLTY", "PHOENIXLTD", "PRESTIGE",
+    "BRIGADE", "NBCC", "NCC", "SOBHA",
+    
+    // --- CHEMICALS & FERTILIZERS ---
+    "AARTIIND", "ATUL", "CHAMBLFERT", "COROMANDEL", "DEEPAKNTR", "FLUOROCHEM",
+    "GNFC", "LINDEINDIA", "NAVINFLUOR", "PIDILITIND", "SRF", "SUMICHEM",
+    "TATACHEM", "UPL",
+    
+    // --- CAPITAL GOODS & INFRA ---
+    "ABB", "AIAENG", "ASTRAL", "BEL", "BHEL", "CGPOWER", "CONCOR", "ELGIEQUIP",
+    "GMRINFRA", "HAL", "HAVELLS", "HONAUT", "IRCTC", "KEI", "KEC", "L&T",
+    "POLYCAB", "RAILTEL", "RITES", "RVNL", "SIEMENS", "SUZLON", "THERMAX",
+    "TIMKEN", "VOLTAS", "KAJARIACER", "ASTRAL",
+    
+    // --- MEDIA & ENTERTAINMENT ---
+    "PVRINOX", "SUNTV", "ZEEL", "TV18BRDCST", "NETWORK18",
+    
+    // --- MISC / OTHERS ---
+    "ADANITRANS", "AEGISCHEM", "AFFLE", "BLUEDART", "BSOFT",
+    "CENTURYTEX", "CROMPTON", "DELTACORP", "EIDPARRY", "FACT", "FSL",
+    "GODREJIND", "GRAPHITE", "HEG", "HFCL", "INDHOTEL", "INDIGOPNTS",
+    "INDIGO", "IRFC", "J&KBANK", "JAMNAAUTO", "JUBLFOOD", "KPRMILL",
+    "MAZDOCK", "MCX", "RENUKA", "TRIDENT", "VGUARD", "VIPIND"
+].map(s => s.endsWith('-EQ') ? s : `${s}-EQ`);
 
 export const APP_THEME = {
   primary: '#3b82f6', 

@@ -11,8 +11,16 @@ interface Performer {
 }
 
 const TopPerformers: React.FC<{ isDarkMode: boolean; onChartClick: (s: string) => void }> = ({ isDarkMode, onChartClick }) => {
-  const [stocks, setStocks] = useState<Performer[]>([]);
-  const [loading, setLoading] = useState(true);
+  // Initialize with static data for instant rendering
+  const [stocks, setStocks] = useState<Performer[]>(
+    WORLD_STOCKS.map(s => ({
+      symbol: s.symbol,
+      token: s.token,
+      price: s.base,
+      change: 0
+    }))
+  );
+  const [hasLoadedLive, setHasLoadedLive] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -20,6 +28,8 @@ const TopPerformers: React.FC<{ isDarkMode: boolean; onChartClick: (s: string) =
     const fetchData = async () => {
       const jwt = localStorage.getItem('ao_jwt');
       const apiKey = localStorage.getItem('ao_api_key');
+      
+      // If not connected, we just keep the static list
       if (!jwt || !apiKey) return;
 
       const results: Performer[] = [];
@@ -27,13 +37,16 @@ const TopPerformers: React.FC<{ isDarkMode: boolean; onChartClick: (s: string) =
       // Use Promise.all to fetch in parallel
       await Promise.all(WORLD_STOCKS.map(async (s) => {
         try {
-          // Attempt to get Market Data (which uses LTP endpoint, more robust than History)
+          // 1. Try fetching with Default Token
           let data = await angelOne.getMarketData(s.token, s.symbol, jwt, apiKey);
           
-          // If default token failed (price 0), try resolving token dynamically
-          if (!data || data.price === 0) {
+          // 2. If data is dead (price 0) or unchanged from base (suspicious), try resolving
+          if (!data || data.price === 0 || (data.price === s.base && data.change === 0)) {
+             console.log(`Resolving live token for ${s.symbol}...`);
              const newToken = await angelOne.resolveToken(s.symbol);
-             if (newToken && newToken !== s.token) {
+             
+             if (newToken) {
+                 // Retry with new token
                  data = await angelOne.getMarketData(newToken, s.symbol, jwt, apiKey);
              }
           }
@@ -41,52 +54,55 @@ const TopPerformers: React.FC<{ isDarkMode: boolean; onChartClick: (s: string) =
           if (data && data.price > 0) {
              results.push({
                symbol: s.symbol,
-               token: data.token,
+               token: data.token, // Use the working token
                price: data.price,
-               change: data.change // Calculated from LTP response (LTP - Close / Close)
+               change: data.change 
+             });
+          } else {
+             // Fallback to static if live fails completely
+             results.push({
+               symbol: s.symbol,
+               token: s.token,
+               price: s.base,
+               change: 0
              });
           }
         } catch (e) {
-          // Ignore failures for individual stocks
+             results.push({
+               symbol: s.symbol,
+               token: s.token,
+               price: s.base,
+               change: 0
+             });
         }
       }));
 
       if (isMounted) {
-        // Sort by performance (highest absolute change %) - show top movers
+        // Sort by magnitude of move (Gainers or Losers)
         const sorted = results.sort((a, b) => Math.abs(b.change) - Math.abs(a.change));
         setStocks(sorted);
-        setLoading(false);
+        setHasLoadedLive(true);
       }
     };
 
     fetchData();
-    const interval = setInterval(fetchData, 15000); // Refresh every 15s
+    const interval = setInterval(fetchData, 10000); // 10s Poll for Top Movers
     return () => {
         isMounted = false;
         clearInterval(interval);
     };
   }, []);
 
-  if (loading) return (
-    <div className="flex gap-3 overflow-x-auto no-scrollbar px-2 py-4">
-       {[1,2,3].map(i => (
-         <div key={i} className={`min-w-[140px] h-[80px] rounded-2xl animate-pulse ${isDarkMode ? 'bg-slate-900' : 'bg-slate-100'}`}></div>
-       ))}
-    </div>
-  );
-
-  if (stocks.length === 0) return (
-      <div className="px-4 py-4 opacity-50 text-xs text-center font-mono">
-        <p>Market Data Offline</p>
-        <p className="text-[8px]">Check Connection / Market Hours</p>
-      </div>
-  );
-
   return (
     <div className="space-y-3 mb-6">
       <div className="flex justify-between items-center px-2">
          <h3 className={`text-xs font-black uppercase tracking-widest ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Top Movers</h3>
-         <span className="text-[9px] font-mono text-emerald-500 animate-pulse">LIVE FEED</span>
+         <div className="flex items-center gap-2">
+            {!hasLoadedLive && <div className="w-2 h-2 rounded-full bg-orange-500 animate-ping"></div>}
+            <span className={`text-[9px] font-mono ${hasLoadedLive ? 'text-emerald-500' : 'text-orange-500'} animate-pulse`}>
+                {hasLoadedLive ? 'LIVE FEED' : 'CONNECTING...'}
+            </span>
+         </div>
       </div>
       <div className="flex gap-3 overflow-x-auto no-scrollbar pb-2 px-2">
         {stocks.map((s, idx) => (
@@ -99,7 +115,7 @@ const TopPerformers: React.FC<{ isDarkMode: boolean; onChartClick: (s: string) =
           >
             <div className="flex justify-between items-start">
                <span className="text-[8px] font-bold text-slate-500">#{idx + 1}</span>
-               <span className="text-[8px] font-mono text-slate-500">TKN: {s.token}</span>
+               <span className="text-[8px] font-mono text-slate-500 hidden sm:inline">TKN: {s.token}</span>
             </div>
             
             <div className="mt-1">
@@ -118,7 +134,7 @@ const TopPerformers: React.FC<{ isDarkMode: boolean; onChartClick: (s: string) =
             <div className="w-full h-1 mt-2 rounded-full bg-slate-500/10 overflow-hidden">
                <div 
                  className={`h-full ${s.change >= 0 ? 'bg-emerald-500' : 'bg-rose-500'}`} 
-                 style={{ width: `${Math.min(Math.abs(s.change) * 20, 100)}%` }}
+                 style={{ width: `${Math.max(10, Math.min(Math.abs(s.change) * 20, 100))}%` }}
                ></div>
             </div>
           </div>

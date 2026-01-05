@@ -26,8 +26,9 @@ const StockChartModal: React.FC<StockChartModalProps> = ({ symbol, isOpen, onClo
     const jwt = localStorage.getItem('ao_jwt');
     const apiKey = localStorage.getItem('ao_api_key') || 'A3uaTHcN';
     
+    // Attempt to find token in constant list, else start with null
     const stock = WORLD_STOCKS.find(s => s.symbol === symbol);
-    let token = stock?.token || "3045"; 
+    let token = stock?.token || null; 
 
     if (chartRef.current) {
         chartRef.current.remove();
@@ -74,17 +75,17 @@ const StockChartModal: React.FC<StockChartModalProps> = ({ symbol, isOpen, onClo
       }
       
       try {
-        let data = await angelOne.getHistoricalData(token, "FIFTEEN_MINUTE", apiKey, jwt);
-
-        // Retry with resolved token if data is empty or null
-        if (!data || data.length === 0) {
-            console.warn(`Default token ${token} failed for ${symbol}, attempting resolve...`);
-            const resolved = await angelOne.resolveToken(symbol);
-            if (resolved && resolved !== token) {
-                token = resolved;
-                data = await angelOne.getHistoricalData(token, "FIFTEEN_MINUTE", apiKey, jwt);
-            }
+        // If token is unknown, we MUST resolve it first
+        if (!token) {
+             const resolved = await angelOne.resolveToken(symbol);
+             if (resolved) {
+                 token = resolved;
+             } else {
+                 throw new Error("Token Resolution Failed");
+             }
         }
+
+        let data = await angelOne.getHistoricalData(token, "FIFTEEN_MINUTE", apiKey, jwt);
 
         if (data && data.length > 0) {
           const sortedData = data.sort((a: any, b: any) => a.time - b.time);

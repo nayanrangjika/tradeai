@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { SignalTimeframe, TradeSignal, MarketMood, PortfolioItem, NewsItem, ConfidenceLevel } from './types';
 import { getMarketMood, analyzeStock, fetchMarketNews } from './services/geminiService';
-import { runMarketScanner } from './services/stockService';
+import { runTargetScanner, runRandomScanner } from './services/stockService';
 import { db } from './services/dbService';
 import AuthGate from './components/AuthGate';
 import TradeCard from './components/TradeCard';
@@ -10,16 +10,16 @@ import PortfolioView from './components/PortfolioView';
 import SettingsView from './components/SettingsView';
 import StockChartModal from './components/StockChartModal';
 import NewsFeed from './components/NewsFeed';
-import TopPerformers from './components/TopPerformers';
 
 export default function App() {
   const [isConnected, setIsConnected] = useState(!!localStorage.getItem('ao_jwt'));
-  // Default to true (Dark Mode), but check local storage if you want persistence later
   const [isDarkMode, setIsDarkMode] = useState(true);
   const [activeTab, setActiveTab] = useState<'home' | 'news' | 'portfolio' | 'settings'>('home');
   
-  // Data State
-  const [signals, setSignals] = useState<TradeSignal[]>([]);
+  // Data State - Split into two buckets
+  const [targetSignals, setTargetSignals] = useState<TradeSignal[]>([]);
+  const [randomSignals, setRandomSignals] = useState<TradeSignal[]>([]);
+  
   const [mood, setMood] = useState<MarketMood | null>(null);
   const [news, setNews] = useState<NewsItem[]>([]);
   const [portfolio, setPortfolio] = useState<PortfolioItem[]>([]);
@@ -29,7 +29,7 @@ export default function App() {
 
   // Filters
   const [filterTimeframe, setFilterTimeframe] = useState<'ALL' | 'INTRADAY' | 'SWING'>('ALL');
-  const [filterConfidence, setFilterConfidence] = useState<'ALL' | 'HIGH' | 'MEDIUM'>('ALL');
+  const [minConfidence, setMinConfidence] = useState<number>(65);
 
   // Hard Refresh Session Clearing Logic
   useEffect(() => {
@@ -40,7 +40,6 @@ export default function App() {
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, []);
 
-  // Theme Effect
   useEffect(() => {
     if (isDarkMode) {
       document.body.classList.add('dark');
@@ -63,10 +62,10 @@ export default function App() {
   const startFullScan = async () => {
     if (isScanning) return;
     setIsScanning(true);
-    setScanProgress("Analyzing Market Mood...");
     
     try {
-      // 1. Fetch Context
+      // 1. Fetch Context (Mood/News)
+      setScanProgress("Analyzing Context...");
       const [moodRes, newsRes] = await Promise.all([
         getMarketMood(),
         fetchMarketNews()
@@ -74,10 +73,16 @@ export default function App() {
       setMood(moodRes);
       setNews(newsRes);
 
-      // 2. Run Technical + AI Scanner
-      setScanProgress("Parallel Scanning Nifty 50...");
-      const newSignals = await runMarketScanner((msg) => setScanProgress(msg));
-      setSignals(prev => [...newSignals, ...prev].slice(0, 10)); // Keep latest 10
+      // 2. Parallel Scans
+      // We run them one after another to avoid rate limits
+      
+      // A. Target Scan (Blue Chips) - Aiming for 5 High Quality Signals
+      const tSignals = await runTargetScanner((msg) => setScanProgress(msg));
+      setTargetSignals(tSignals); 
+
+      // B. Random Scan (Discovery) - Aiming for 5 High Quality Signals
+      const rSignals = await runRandomScanner((msg) => setScanProgress(msg));
+      setRandomSignals(rSignals);
       
     } catch (e) {
       console.error("Scan error", e);
@@ -87,11 +92,11 @@ export default function App() {
     }
   };
 
-  const filteredSignals = signals.filter(s => {
+  const filterSignal = (s: TradeSignal) => {
     if (filterTimeframe !== 'ALL' && s.timeframe !== filterTimeframe) return false;
-    if (filterConfidence !== 'ALL' && s.confidenceLevel.toUpperCase() !== filterConfidence) return false;
+    if (s.confidenceScore < minConfidence) return false;
     return true;
-  });
+  };
 
   const handleAddToPortfolio = (item: Omit<PortfolioItem, 'id' | 'dateAdded'>) => {
     const newItem: PortfolioItem = {
@@ -114,7 +119,8 @@ export default function App() {
     if(window.confirm("Purge local data cache?")) {
       db.clearAll();
       setPortfolio([]);
-      setSignals([]);
+      setTargetSignals([]);
+      setRandomSignals([]);
       alert("System purged.");
     }
   };
@@ -129,11 +135,10 @@ export default function App() {
         <div className="max-w-md mx-auto flex justify-between items-center">
           <div>
             <h1 className={`text-xl font-black tracking-tighter ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>FURON<span className="text-blue-500">LABS</span></h1>
-            <p className="text-[9px] font-mono text-slate-500 uppercase tracking-widest">Quant Terminal v2.1</p>
+            <p className="text-[9px] font-mono text-slate-500 uppercase tracking-widest">Quant Terminal v2.3</p>
           </div>
           
           <div className="flex items-center gap-3">
-            {/* Theme Toggle */}
             <button 
               onClick={() => setIsDarkMode(!isDarkMode)}
               className={`p-2 rounded-full border transition-all ${isDarkMode ? 'bg-slate-900 border-slate-800 text-yellow-400' : 'bg-slate-100 border-slate-300 text-slate-600'}`}
@@ -168,66 +173,88 @@ export default function App() {
               </div>
             )}
             
-            {/* Top Performers Reel */}
-            <TopPerformers isDarkMode={isDarkMode} onChartClick={setActiveChartSymbol} />
-
-            {/* Filter Bar */}
-            <div className="flex gap-2 overflow-x-auto no-scrollbar pb-2">
+            {/* Timeframe Filter Bar */}
+            <div className="flex gap-2 justify-center pb-1">
               {['ALL', 'INTRADAY', 'SWING'].map(tf => (
                 <button 
                   key={tf}
                   onClick={() => setFilterTimeframe(tf as any)}
                   className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider border transition-all ${
                     filterTimeframe === tf 
-                    ? 'bg-blue-600 border-blue-500 text-white' 
+                    ? 'bg-blue-600 border-blue-500 text-white shadow-lg shadow-blue-500/20' 
                     : (isDarkMode ? 'bg-slate-900 border-slate-800 text-slate-500' : 'bg-slate-100 border-slate-200 text-slate-500')
                   }`}
                 >
                   {tf}
                 </button>
               ))}
-              <div className={`w-px mx-1 ${isDarkMode ? 'bg-slate-800' : 'bg-slate-300'}`}></div>
-              {['ALL', 'HIGH', 'MEDIUM'].map(conf => (
-                <button 
-                  key={conf}
-                  onClick={() => setFilterConfidence(conf as any)}
-                  className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider border transition-all ${
-                    filterConfidence === conf 
-                    ? 'bg-emerald-600/20 border-emerald-500 text-emerald-500' 
-                    : (isDarkMode ? 'bg-slate-900 border-slate-800 text-slate-500' : 'bg-slate-100 border-slate-200 text-slate-500')
-                  }`}
-                >
-                  {conf}
-                </button>
-              ))}
             </div>
 
-            {/* Status Bar */}
+            {/* Confidence Filter Bar (NEW) */}
+            <div className={`p-1 rounded-xl flex justify-between items-center border ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-slate-50 border-slate-200'}`}>
+                <span className="text-[8px] font-black text-slate-500 uppercase px-3 tracking-widest">Confidence:</span>
+                <div className="flex gap-1">
+                    {[65, 75, 85].map((val) => (
+                        <button
+                          key={val}
+                          onClick={() => setMinConfidence(val)}
+                          className={`px-3 py-1 rounded-lg text-[9px] font-bold transition-all ${
+                             minConfidence === val 
+                             ? 'bg-emerald-500 text-white shadow-md' 
+                             : (isDarkMode ? 'text-slate-400 hover:bg-slate-800' : 'text-slate-600 hover:bg-white')
+                          }`}
+                        >
+                           {val === 85 ? 'SNIPER' : `>${val}%`}
+                        </button>
+                    ))}
+                </div>
+            </div>
+
             {isScanning && (
               <div className="px-4 py-2 rounded-lg bg-blue-500/10 border border-blue-500/20 text-center animate-pulse">
                 <p className="text-[10px] font-black text-blue-500 uppercase tracking-widest">{scanProgress}</p>
               </div>
             )}
 
-            {/* Signals Feed */}
-            <div className="space-y-4">
-              {filteredSignals.length === 0 && !isScanning ? (
-                <div className="py-20 text-center opacity-40">
-                  <div className={`inline-block p-4 rounded-full mb-3 ${isDarkMode ? 'bg-slate-900' : 'bg-slate-200'}`}>
-                    <svg className="w-6 h-6 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                  </div>
-                  <p className="text-xs font-bold text-slate-500 uppercase">No Signals Match Filter</p>
+            {/* SECTION A: BLUE CHIP RADAR (TARGETS) */}
+            <div className="space-y-3">
+                <div className="flex items-center justify-between px-2">
+                    <div className="flex items-center gap-2">
+                        <svg className="w-4 h-4 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+                        <h2 className={`text-sm font-black uppercase tracking-widest ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>Blue Chip Radar</h2>
+                    </div>
+                    <span className="text-[9px] font-mono text-slate-500">FILTERED</span>
                 </div>
-              ) : (
-                filteredSignals.map(s => (
-                  <TradeCard 
-                    key={s.id} 
-                    signal={s} 
-                    isDarkMode={isDarkMode} 
-                    onShowChart={(sym) => setActiveChartSymbol(sym)}
-                  />
-                ))
-              )}
+                
+                {targetSignals.filter(filterSignal).length === 0 ? (
+                    <div className={`p-6 rounded-2xl border border-dashed text-center ${isDarkMode ? 'border-slate-800 bg-slate-900/30' : 'border-slate-200 bg-slate-50'}`}>
+                        <p className="text-[10px] text-slate-500 uppercase tracking-wider">No signals match criteria</p>
+                    </div>
+                ) : (
+                    targetSignals.filter(filterSignal).map(s => (
+                        <TradeCard key={s.id} signal={s} isDarkMode={isDarkMode} onShowChart={(sym) => setActiveChartSymbol(sym)} />
+                    ))
+                )}
+            </div>
+
+            {/* SECTION B: MARKET DISCOVERY (RANDOM) */}
+            <div className="space-y-3 pt-4 border-t border-dashed border-slate-800">
+                <div className="flex items-center justify-between px-2">
+                    <div className="flex items-center gap-2">
+                        <svg className="w-4 h-4 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+                        <h2 className={`text-sm font-black uppercase tracking-widest ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>Market Discovery</h2>
+                    </div>
+                </div>
+
+                {randomSignals.filter(filterSignal).length === 0 ? (
+                    <div className={`p-6 rounded-2xl border border-dashed text-center ${isDarkMode ? 'border-slate-800 bg-slate-900/30' : 'border-slate-200 bg-slate-50'}`}>
+                        <p className="text-[10px] text-slate-500 uppercase tracking-wider">No signals match criteria</p>
+                    </div>
+                ) : (
+                    randomSignals.filter(filterSignal).map(s => (
+                        <TradeCard key={s.id} signal={s} isDarkMode={isDarkMode} onShowChart={(sym) => setActiveChartSymbol(sym)} />
+                    ))
+                )}
             </div>
           </>
         )}

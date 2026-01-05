@@ -46,6 +46,7 @@ export interface TradeSignal {
   newsImpact: 'Positive' | 'Negative' | 'Neutral';
   reason: string; // Combined technical + news + risk explanation
   timestamp: string;
+  timeline?: string; // Expected duration (e.g. "2 Hours", "3-5 Days")
   sources?: GroundingSource[];
   newsContext?: string;
   timeframe?: SignalTimeframe;

@@ -2,6 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { BrokerCredentials } from '../types';
 import { angelOne } from '../services/angelOneService';
+import { fetchLivePrice } from '../services/stockService';
 import { getMarketStatus, WORLD_STOCKS, API_KEYS } from '../constants';
 import { GoogleGenAI } from "@google/genai";
 import StockChartModal from './StockChartModal';
@@ -13,12 +14,18 @@ interface SettingsViewProps {
 }
 
 const SettingsView: React.FC<SettingsViewProps> = ({ isDarkMode, onClearData }) => {
-  const [swiggyPrice, setSwiggyPrice] = useState<{current: number, prev: number} | null>(null);
+  // Live Data States
+  const [zomatoPrice, setZomatoPrice] = useState<{current: number, prev: number} | null>(null);
+  
   const [isChartOpen, setIsChartOpen] = useState(false);
+  const [chartSymbol, setChartSymbol] = useState<string>('ZOMATO-EQ');
+  
   const [hasCustomAiKey, setHasCustomAiKey] = useState(false);
   const [manualAiKey, setManualAiKey] = useState('');
   const [aiStatus, setAiStatus] = useState<'IDLE' | 'TESTING' | 'HEALTHY' | 'EXHAUSTED' | 'ERROR'>('IDLE');
-  const [resolvedToken, setResolvedToken] = useState<string | null>(null);
+  
+  const [resolvedZomatoToken, setResolvedZomatoToken] = useState<string | null>(null);
+  
   const market = getMarketStatus();
   
   const [brokerCreds, setBrokerCreds] = useState<BrokerCredentials>({
@@ -30,14 +37,14 @@ const SettingsView: React.FC<SettingsViewProps> = ({ isDarkMode, onClearData }) 
   });
   
   const isConnected = !!localStorage.getItem('ao_jwt');
-  const swiggyStock = WORLD_STOCKS.find(s => s.symbol === 'SWIGGY-EQ');
+  const zomatoStock = WORLD_STOCKS.find(s => s.symbol === 'ZOMATO-EQ');
 
   useEffect(() => {
-    // Check if key exists in storage
+    // Check if key exists in storage or env
     const storedKey = localStorage.getItem('custom_gemini_key');
-    if (storedKey) {
+    if (storedKey || process.env.API_KEY) {
       setHasCustomAiKey(true);
-      setManualAiKey(storedKey);
+      if(storedKey) setManualAiKey(storedKey);
     }
 
     // Also check the dynamic selection method
@@ -49,53 +56,39 @@ const SettingsView: React.FC<SettingsViewProps> = ({ isDarkMode, onClearData }) 
     };
     checkAiKey();
 
-    // Resolve token once on mount if connected
-    const resolveSwiggyToken = async () => {
-      if (!isConnected || !swiggyStock) return;
+    // Resolve tokens once on mount if connected (Purely for UI display of Token ID)
+    const resolveTokens = async () => {
+      if (!isConnected) return;
       
-      const token = await angelOne.resolveToken(swiggyStock.symbol);
-      if (token) {
-        setResolvedToken(token);
-      } else {
-        setResolvedToken(swiggyStock.token);
+      // Resolve Zomato
+      if (zomatoStock) {
+        const t2 = await angelOne.resolveToken(zomatoStock.symbol);
+        setResolvedZomatoToken(t2 || zomatoStock.token);
       }
     };
-    resolveSwiggyToken();
-  }, [isConnected, swiggyStock]);
+    resolveTokens();
+  }, [isConnected, zomatoStock]);
 
+  // Poll Prices using robust fetchLivePrice
   useEffect(() => {
-    if (!isConnected || !swiggyStock || !resolvedToken) return;
+    if (!isConnected) return;
 
-    const fetchSwiggyPrice = async () => {
-      const jwt = localStorage.getItem('ao_jwt');
-      const apiKey = localStorage.getItem('ao_api_key') || API_KEYS.MARKET;
-      
-      if (jwt) {
-        try {
-          const price = await angelOne.getLTP(resolvedToken, swiggyStock.symbol, jwt, apiKey);
-          if (price > 0) {
-            setSwiggyPrice(prev => ({
-              current: price,
-              prev: prev?.current || price
-            }));
-          } else if (!swiggyPrice) {
-            // Fallback for market close
-             const candles = await angelOne.getHistoricalData(resolvedToken, "ONE_DAY", apiKey, jwt);
-             if (candles && candles.length > 0) {
-                const close = candles[candles.length - 1].close;
-                setSwiggyPrice({ current: close, prev: close });
-             }
-          }
-        } catch (e) {
-          console.error("LTP fetch error:", e);
-        }
-      }
+    const fetchPrices = async () => {
+      // Fetch Zomato
+      if (zomatoStock) {
+         try {
+           const price = await fetchLivePrice(zomatoStock.symbol);
+           if (price > 0) {
+             setZomatoPrice(prev => ({ current: price, prev: prev?.current || price }));
+           }
+         } catch (e) { console.error(e); }
+       }
     };
 
-    fetchSwiggyPrice();
-    const interval = setInterval(fetchSwiggyPrice, market.isOpen ? 5000 : 30000);
+    fetchPrices();
+    const interval = setInterval(fetchPrices, market.isOpen ? 5000 : 15000);
     return () => clearInterval(interval);
-  }, [isConnected, swiggyStock, market.isOpen, resolvedToken]);
+  }, [isConnected, zomatoStock, market.isOpen]);
 
   const testAiIntegrity = async () => {
     setAiStatus('TESTING');
@@ -118,7 +111,6 @@ const SettingsView: React.FC<SettingsViewProps> = ({ isDarkMode, onClearData }) 
   };
 
   const handleUpdateAiKey = async () => {
-    // Support Google AI Studio automated selection
     if ((window as any).aistudio?.openSelectKey) {
       await (window as any).aistudio.openSelectKey();
       setHasCustomAiKey(true);
@@ -154,10 +146,24 @@ const SettingsView: React.FC<SettingsViewProps> = ({ isDarkMode, onClearData }) 
     window.location.reload();
   };
 
-  const priceColor = !swiggyPrice ? 'text-slate-500' : 
-    swiggyPrice.current > swiggyPrice.prev ? 'text-emerald-500' : 
-    swiggyPrice.current < swiggyPrice.prev ? 'text-rose-500' : 
-    isDarkMode ? 'text-white' : 'text-slate-900';
+  const getPriceColor = (p: {current: number, prev: number} | null) => {
+    if (!p) return 'text-slate-500';
+    if (p.current > p.prev) return 'text-emerald-500';
+    if (p.current < p.prev) return 'text-rose-500';
+    return isDarkMode ? 'text-white' : 'text-slate-900';
+  };
+
+  const getArrow = (p: {current: number, prev: number} | null) => {
+    if (!p) return '•';
+    if (p.current > p.prev) return '▲';
+    if (p.current < p.prev) return '▼';
+    return '•';
+  };
+
+  const openChart = (sym: string) => {
+    setChartSymbol(sym);
+    setIsChartOpen(true);
+  };
 
   return (
     <div className="space-y-6 pb-12">
@@ -185,12 +191,12 @@ const SettingsView: React.FC<SettingsViewProps> = ({ isDarkMode, onClearData }) 
               aiStatus === 'EXHAUSTED' ? 'bg-rose-500 animate-pulse' : 
               'bg-blue-500'
             }`}></span>
-            {aiStatus === 'IDLE' ? (hasCustomAiKey ? 'Custom Key' : 'Default Quota') : aiStatus}
+            {aiStatus === 'IDLE' ? (hasCustomAiKey ? 'Configured' : 'Default Quota') : aiStatus}
           </div>
         </div>
         
         <p className={`text-[10px] leading-relaxed mb-4 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
-          Enter your Gemini API key to remove rate limits. Keys are stored locally on your device.
+          Enter your Gemini API key to remove rate limits. You can also hardcode it in services/geminiService.ts.
         </p>
 
         <div className="space-y-3">
@@ -202,7 +208,7 @@ const SettingsView: React.FC<SettingsViewProps> = ({ isDarkMode, onClearData }) 
                placeholder="Paste Gemini API Key here..."
                className={`w-full p-3 rounded-xl text-xs font-mono border outline-none focus:ring-2 focus:ring-blue-500 ${isDarkMode ? 'bg-slate-950 border-slate-800 text-slate-200' : 'bg-slate-50 border-slate-200 text-slate-800'}`}
              />
-             {hasCustomAiKey && (
+             {hasCustomAiKey && manualAiKey && (
                <button onClick={clearManualKey} className="absolute right-3 top-3 text-[9px] font-bold text-rose-500 uppercase hover:underline">Clear</button>
              )}
           </div>
@@ -234,38 +240,40 @@ const SettingsView: React.FC<SettingsViewProps> = ({ isDarkMode, onClearData }) 
       </div>
 
       {isConnected && (
-        <div className={`p-6 rounded-[2.5rem] border overflow-hidden relative ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200 shadow-xl'}`}>
-          <div className="flex justify-between items-start mb-4 relative z-10">
-            <div>
-              <p className="text-[9px] text-orange-500 font-black uppercase tracking-widest mb-1">Production Asset</p>
-              <h3 className={`text-lg font-black ${isDarkMode ? 'text-slate-100' : 'text-slate-800'}`}>SWIGGY-EQ</h3>
-              <p className="text-[9px] text-slate-500 font-mono mt-1">Token: {resolvedToken || '---'}</p>
+        <>
+          <h3 className={`text-xs font-black uppercase tracking-widest px-2 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Live Feed Diagnostics</h3>
+          
+          <div className="grid grid-cols-1 gap-4">
+            {/* ZOMATO CARD */}
+            <div className={`p-5 rounded-[2.5rem] border overflow-hidden relative ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200 shadow-md'}`}>
+              <div className="flex justify-between items-start mb-4 relative z-10">
+                <div>
+                  <p className="text-[9px] text-rose-500 font-black uppercase tracking-widest mb-1">LIVE DATA CHECK</p>
+                  <h3 className={`text-base font-black ${isDarkMode ? 'text-slate-100' : 'text-slate-800'}`}>ZOMATO-EQ</h3>
+                  <p className="text-[9px] text-slate-500 font-mono mt-1">Token: {resolvedZomatoToken || zomatoStock?.token || '---'}</p>
+                </div>
+                <button 
+                  onClick={() => openChart('ZOMATO-EQ')}
+                  className="w-8 h-8 flex items-center justify-center bg-rose-600 text-white rounded-xl shadow-lg shadow-rose-500/20"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z" /></svg>
+                </button>
+              </div>
+
+              <div className="flex items-baseline gap-2 relative z-10">
+                <span className={`text-3xl font-black tracking-tighter ${getPriceColor(zomatoPrice)} transition-colors duration-300`}>
+                  {zomatoPrice ? `₹${zomatoPrice.current.toLocaleString('en-IN', { minimumFractionDigits: 2 })}` : '---'}
+                </span>
+                <span className={`text-xs font-bold ${getPriceColor(zomatoPrice)}`}>
+                  {getArrow(zomatoPrice)}
+                </span>
+              </div>
             </div>
-            <button 
-              onClick={() => setIsChartOpen(true)}
-              className="px-3 py-1.5 bg-orange-600 text-white text-[9px] font-black uppercase rounded-xl border border-orange-500 shadow-lg shadow-orange-500/20"
-            >
-              Chart
-            </button>
           </div>
-
-          <div className="flex items-baseline gap-2 relative z-10">
-            <span className={`text-4xl font-black tracking-tighter ${priceColor} transition-colors duration-300`}>
-              {swiggyPrice ? `₹${swiggyPrice.current.toLocaleString('en-IN', { minimumFractionDigits: 2 })}` : '---'}
-            </span>
-            {swiggyPrice && (
-              <span className={`text-xs font-bold ${
-                 swiggyPrice.current > swiggyPrice.prev ? 'text-emerald-500' : 
-                 swiggyPrice.current < swiggyPrice.prev ? 'text-rose-500' : 'text-slate-500'
-              }`}>
-                {swiggyPrice.current > swiggyPrice.prev ? '▲' : swiggyPrice.current < swiggyPrice.prev ? '▼' : '•'}
-              </span>
-            )}
-          </div>
-        </div>
+          
+          <DebugTerminal isDarkMode={isDarkMode} />
+        </>
       )}
-
-      {isConnected && <DebugTerminal isDarkMode={isDarkMode} />}
 
       <div className={`p-6 rounded-[2.5rem] border transition-all ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200 shadow-xl'}`}>
         <div className="space-y-4">
@@ -296,7 +304,7 @@ const SettingsView: React.FC<SettingsViewProps> = ({ isDarkMode, onClearData }) 
       </button>
 
       <StockChartModal 
-        symbol="SWIGGY-EQ" 
+        symbol={chartSymbol} 
         isOpen={isChartOpen} 
         onClose={() => setIsChartOpen(false)} 
         isDarkMode={isDarkMode} 
