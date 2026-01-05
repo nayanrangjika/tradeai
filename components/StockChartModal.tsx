@@ -15,6 +15,7 @@ const StockChartModal: React.FC<StockChartModalProps> = ({ symbol, isOpen, onClo
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const pollTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (!isOpen || !chartContainerRef.current) return;
@@ -22,7 +23,9 @@ const StockChartModal: React.FC<StockChartModalProps> = ({ symbol, isOpen, onClo
     setIsLoading(true);
     const jwt = localStorage.getItem('ao_jwt');
     const apiKey = localStorage.getItem('ao_api_key') || 'A3uaTHcN';
+    // Find stock token; default to SBIN if not found to avoid crash
     const stock = WORLD_STOCKS.find(s => s.symbol === symbol);
+    const token = stock?.token || "3045";
 
     const chartOptions = {
       layout: {
@@ -38,6 +41,7 @@ const StockChartModal: React.FC<StockChartModalProps> = ({ symbol, isOpen, onClo
       timeScale: {
         borderColor: isDarkMode ? '#1e293b' : '#e2e8f0',
         timeVisible: true,
+        secondsVisible: false,
       },
       rightPriceScale: {
         borderColor: isDarkMode ? '#1e293b' : '#e2e8f0',
@@ -56,22 +60,29 @@ const StockChartModal: React.FC<StockChartModalProps> = ({ symbol, isOpen, onClo
     });
 
     const loadData = async () => {
-      const token = stock?.token || "3045";
       if (!jwt) {
         setIsLoading(false);
         return;
       }
       
-      const data = await angelOne.getHistoricalData(token, "FIFTEEN_MINUTE", apiKey, jwt);
+      try {
+        const data = await angelOne.getHistoricalData(token, "FIFTEEN_MINUTE", apiKey, jwt);
 
-      if (data && data.length > 0) {
-        candlestickSeries.setData(data);
-        chart.timeScale().fitContent();
+        if (data && data.length > 0) {
+          candlestickSeries.setData(data);
+          chart.timeScale().fitContent();
+        }
+      } catch (e) {
+        console.error("Chart load failed", e);
+      } finally {
+        setIsLoading(false);
       }
-      setIsLoading(false);
     };
 
     loadData();
+
+    // Auto-refresh chart data every minute to keep it "live"
+    pollTimerRef.current = window.setInterval(loadData, 60000);
 
     const handleResize = () => {
       if (chartContainerRef.current && chartRef.current) {
@@ -83,6 +94,7 @@ const StockChartModal: React.FC<StockChartModalProps> = ({ symbol, isOpen, onClo
 
     return () => {
       window.removeEventListener('resize', handleResize);
+      if (pollTimerRef.current) clearInterval(pollTimerRef.current);
       chart.remove();
     };
   }, [isOpen, isDarkMode, symbol]);

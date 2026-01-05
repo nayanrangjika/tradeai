@@ -79,13 +79,8 @@ export const fetchLivePrice = async (symbol: string): Promise<number> => {
 };
 
 export const fetchMarketMood = async (): Promise<MarketMood> => {
-  const status = getMarketStatus();
-  const realNiftyData = {
-    advancing: "Scanning...",
-    declining: "Scanning...",
-    change: status.isOpen ? "Live" : "Closed"
-  };
-  return await getMarketMood(realNiftyData);
+  // Fix: getMarketMood in geminiService.ts takes 0 arguments. Removed local status and realNiftyData.
+  return await getMarketMood();
 };
 
 const fetchLiveStockData = async (symbol: string, token: string): Promise<StockData | null> => {
@@ -141,14 +136,15 @@ export const runMarketScanner = async (onProgress: (msg: string) => void): Promi
       continue;
     }
 
-    const feedbackHistory = stockFeedbackMap[stock.symbol] || null;
     onProgress(`Neural Analysis: ${stock.symbol}...`);
     
     try {
-      const intradaySignal = await analyzeStock(data, SignalTimeframe.INTRADAY, feedbackHistory);
+      // Fix: analyzeStock in geminiService.ts takes 2 arguments. Removed unused feedbackHistory.
+      const intradaySignal = await analyzeStock(data, SignalTimeframe.INTRADAY);
       if (intradaySignal) activeSignals.push(intradaySignal);
 
-      const swingSignal = await analyzeStock(data, SignalTimeframe.SWING, feedbackHistory);
+      // Fix: analyzeStock in geminiService.ts takes 2 arguments. Removed unused feedbackHistory.
+      const swingSignal = await analyzeStock(data, SignalTimeframe.SWING);
       if (swingSignal) activeSignals.push(swingSignal);
     } catch (e) {
       console.error(`AI Logic Error for ${stock.symbol}`, e);

@@ -3,6 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { BrokerCredentials } from '../types';
 import { angelOne } from '../services/angelOneService';
 import { getMarketStatus, WORLD_STOCKS, API_KEYS } from '../constants';
+import { GoogleGenAI } from "@google/genai";
 import StockChartModal from './StockChartModal';
 import DebugTerminal from './DebugTerminal';
 
@@ -11,16 +12,12 @@ interface SettingsViewProps {
   onClearData: () => void;
 }
 
-const ANGEL_ONE_PRESETS = [
-  { name: 'Tradingfur', key: API_KEYS.TRADING, type: 'Trading' },
-  { name: 'History', key: API_KEYS.HISTORICAL, type: 'Historical' },
-  { name: 'Market', key: API_KEYS.MARKET, type: 'Market' },
-];
-
 const SettingsView: React.FC<SettingsViewProps> = ({ isDarkMode, onClearData }) => {
   const [swiggyPrice, setSwiggyPrice] = useState<{current: number, prev: number} | null>(null);
   const [isChartOpen, setIsChartOpen] = useState(false);
   const [hasCustomAiKey, setHasCustomAiKey] = useState(false);
+  const [aiStatus, setAiStatus] = useState<'IDLE' | 'TESTING' | 'HEALTHY' | 'EXHAUSTED' | 'ERROR'>('IDLE');
+  const [proxyUrl, setProxyUrl] = useState(localStorage.getItem('ao_proxy_url_override') || '');
   const market = getMarketStatus();
   
   const [brokerCreds, setBrokerCreds] = useState<BrokerCredentials>({
@@ -28,14 +25,13 @@ const SettingsView: React.FC<SettingsViewProps> = ({ isDarkMode, onClearData }) 
     clientCode: localStorage.getItem('ao_client_code') || 'S433867',
     apiKey: localStorage.getItem('ao_api_key') || API_KEYS.TRADING,
     apiSecret: '',
-    totp: localStorage.getItem('ao_password') || '', 
+    totp: localStorage.getItem('ao_password') || '2727', // Use PIN from user default
   });
   
   const isConnected = !!localStorage.getItem('ao_jwt');
   const swiggyStock = WORLD_STOCKS.find(s => s.symbol === 'SWIGGY-EQ');
 
   useEffect(() => {
-    // Check AI Key status
     const checkAiKey = async () => {
       if ((window as any).aistudio?.hasSelectedApiKey) {
         const hasKey = await (window as any).aistudio.hasSelectedApiKey();
@@ -68,17 +64,46 @@ const SettingsView: React.FC<SettingsViewProps> = ({ isDarkMode, onClearData }) 
     return () => clearInterval(interval);
   }, [isConnected, swiggyStock, market.isOpen]);
 
+  const testAiIntegrity = async () => {
+    setAiStatus('TESTING');
+    try {
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+      await ai.models.generateContent({
+        model: 'gemini-3-flash-preview',
+        contents: 'ping',
+        config: { maxOutputTokens: 2, thinkingConfig: { thinkingBudget: 0 } }
+      });
+      setAiStatus('HEALTHY');
+    } catch (e: any) {
+      if (e.message?.includes('429') || e.message?.toLowerCase().includes('quota')) {
+        setAiStatus('EXHAUSTED');
+      } else {
+        setAiStatus('ERROR');
+      }
+    }
+  };
+
   const handleUpdateAiKey = async () => {
     if ((window as any).aistudio?.openSelectKey) {
       await (window as any).aistudio.openSelectKey();
-      // Assume success as per platform guidelines to avoid race conditions
       setHasCustomAiKey(true);
+      setAiStatus('IDLE');
     }
   };
 
   const savePin = () => {
     localStorage.setItem('ao_password', brokerCreds.totp);
     alert("PIN Updated.");
+  };
+
+  const saveProxyUrl = () => {
+    if (proxyUrl.trim()) {
+      localStorage.setItem('ao_proxy_url_override', proxyUrl.trim());
+    } else {
+      localStorage.removeItem('ao_proxy_url_override');
+    }
+    alert("Proxy Settings Updated. System will re-sync.");
+    window.location.reload();
   };
 
   const disconnectBroker = () => {
@@ -97,41 +122,76 @@ const SettingsView: React.FC<SettingsViewProps> = ({ isDarkMode, onClearData }) 
         <h2 className={`text-xl font-bold ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>System Settings</h2>
         <div className={`px-2.5 py-1 rounded-full text-[8px] font-black uppercase tracking-widest flex items-center gap-1.5 ${isConnected ? 'bg-emerald-500/10 text-emerald-500' : 'bg-slate-500/10 text-slate-500'}`}>
           <span className={`w-1.5 h-1.5 rounded-full ${isConnected ? 'bg-emerald-500 animate-pulse' : 'bg-slate-500'}`}></span>
-          {isConnected ? 'Market Feed Live' : 'Feed Offline'}
+          {isConnected ? 'Bridge Active' : 'Bridge Offline'}
         </div>
       </div>
 
-      {/* AI Brain Key Configuration Section */}
-      <div className={`p-6 rounded-[2.5rem] border overflow-hidden relative ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200 shadow-xl'}`}>
+      <div className={`p-6 rounded-[2.5rem] border overflow-hidden relative ${isDarkMode ? 'bg-slate-900 border-slate-800 shadow-2xl shadow-blue-500/5' : 'bg-white border-slate-200 shadow-xl'}`}>
         <div className="flex justify-between items-start mb-4">
           <div>
-            <p className="text-[9px] text-blue-500 font-black uppercase tracking-widest mb-1">AI Intelligence Engine</p>
-            <h3 className={`text-lg font-black ${isDarkMode ? 'text-slate-100' : 'text-slate-800'}`}>Gemini Neural Link</h3>
+            <p className="text-[9px] text-blue-500 font-black uppercase tracking-widest mb-1">Neural Core Management</p>
+            <h3 className={`text-lg font-black ${isDarkMode ? 'text-slate-100' : 'text-slate-800'}`}>AI Intelligence Key</h3>
           </div>
-          <div className={`px-2 py-1 rounded-lg text-[8px] font-black uppercase ${hasCustomAiKey ? 'bg-emerald-500/10 text-emerald-500' : 'bg-blue-500/10 text-blue-500'}`}>
-            {hasCustomAiKey ? 'Custom Billing active' : 'Default Quota active'}
+          <div className={`flex items-center gap-2 px-2 py-1 rounded-lg text-[8px] font-black uppercase ${
+            aiStatus === 'HEALTHY' ? 'bg-emerald-500/10 text-emerald-500' : 
+            aiStatus === 'EXHAUSTED' ? 'bg-rose-500/10 text-rose-500' : 
+            'bg-blue-500/10 text-blue-500'
+          }`}>
+            <span className={`w-1.5 h-1.5 rounded-full ${
+              aiStatus === 'HEALTHY' ? 'bg-emerald-500' : 
+              aiStatus === 'EXHAUSTED' ? 'bg-rose-500 animate-pulse' : 
+              'bg-blue-500'
+            }`}></span>
+            {aiStatus === 'IDLE' ? (hasCustomAiKey ? 'Custom Key' : 'Default Quota') : aiStatus}
           </div>
         </div>
         
-        <p className={`text-[10px] leading-relaxed mb-5 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
-          If AI analysis is failing or quota is exhausted, link your own Google Cloud API Key for unlimited production signals.
+        <p className={`text-[10px] leading-relaxed mb-6 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+          Configure your personal Gemini API key to bypass default usage limits.
         </p>
 
-        <div className="flex flex-col gap-3">
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <button 
+              onClick={testAiIntegrity}
+              disabled={aiStatus === 'TESTING'}
+              className={`py-3.5 rounded-2xl text-[9px] font-black uppercase tracking-widest transition-all border ${
+                isDarkMode ? 'bg-slate-950 border-slate-800 text-slate-400' : 'bg-slate-50 border-slate-200 text-slate-600'
+              }`}
+            >
+              {aiStatus === 'TESTING' ? 'Testing...' : 'Test Sync'}
+            </button>
+            <button 
+              onClick={handleUpdateAiKey}
+              className="py-3.5 bg-blue-600 text-white text-[9px] font-black uppercase tracking-widest rounded-2xl shadow-lg shadow-blue-500/20 active:scale-95 transition-all"
+            >
+              Update Key
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div className={`p-6 rounded-[2.5rem] border overflow-hidden relative ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200 shadow-xl'}`}>
+        <p className="text-[9px] text-emerald-500 font-black uppercase tracking-widest mb-1">Bridge Connectivity</p>
+        <h3 className={`text-lg font-black mb-4 ${isDarkMode ? 'text-slate-100' : 'text-slate-800'}`}>Cloud Bridge Settings</h3>
+        
+        <div className="space-y-3">
+          <div className="space-y-1">
+            <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest px-1">Bridge Service URL</label>
+            <input 
+              type="text"
+              value={proxyUrl}
+              onChange={e => setProxyUrl(e.target.value)}
+              placeholder="https://furonlabs-automated-stock-trading-advisor-380159937883.us-west1.run.app"
+              className={`w-full p-3 rounded-xl text-[10px] border font-mono ${isDarkMode ? 'bg-slate-950 border-slate-800 text-blue-400' : 'bg-slate-50 border-slate-200 text-blue-600'}`}
+            />
+          </div>
           <button 
-            onClick={handleUpdateAiKey}
-            className="w-full py-3.5 bg-blue-600 text-white text-[10px] font-black uppercase tracking-widest rounded-2xl shadow-lg shadow-blue-500/20 active:scale-95 transition-all"
+            onClick={saveProxyUrl}
+            className="w-full py-3.5 bg-slate-800 text-white text-[9px] font-black uppercase tracking-widest rounded-2xl active:scale-95 transition-all border border-slate-700"
           >
-            {hasCustomAiKey ? 'Change API Key' : 'Configure Custom API Key'}
+            Update Production Sync
           </button>
-          <a 
-            href="https://ai.google.dev/gemini-api/docs/billing" 
-            target="_blank" 
-            rel="noopener noreferrer"
-            className={`text-center py-2 text-[9px] font-bold uppercase tracking-tighter transition-opacity hover:opacity-70 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}
-          >
-            Manage Billing & API Documentation ↗
-          </a>
         </div>
       </div>
 
@@ -146,16 +206,13 @@ const SettingsView: React.FC<SettingsViewProps> = ({ isDarkMode, onClearData }) 
               onClick={() => setIsChartOpen(true)}
               className="px-3 py-1.5 bg-orange-600 text-white text-[9px] font-black uppercase rounded-xl border border-orange-500 shadow-lg shadow-orange-500/20"
             >
-              Live Chart
+              Chart
             </button>
           </div>
 
           <div className="flex items-baseline gap-2 relative z-10">
             <span className={`text-4xl font-black tracking-tighter ${priceColor} transition-colors duration-300`}>
               ₹{swiggyPrice ? swiggyPrice.current.toLocaleString('en-IN', { minimumFractionDigits: 2 }) : '---'}
-            </span>
-            <span className={`text-[10px] font-black uppercase tracking-widest ${market.isOpen ? 'text-emerald-500' : 'text-slate-500'}`}>
-              {market.isOpen ? 'LIVE' : 'CLOSED'}
             </span>
           </div>
         </div>
@@ -165,23 +222,8 @@ const SettingsView: React.FC<SettingsViewProps> = ({ isDarkMode, onClearData }) 
 
       <div className={`p-6 rounded-[2.5rem] border transition-all ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200 shadow-xl'}`}>
         <div className="space-y-4">
-          <div className="space-y-2">
-            <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest px-1">Active Production Keys</label>
-            <div className="grid grid-cols-1 gap-2">
-              {ANGEL_ONE_PRESETS.map(p => (
-                <div key={p.name} className={`p-3 rounded-xl border flex justify-between items-center ${isDarkMode ? 'bg-slate-950 border-slate-800' : 'bg-slate-50 border-slate-200'}`}>
-                   <div>
-                     <p className="text-[8px] font-black text-slate-500 uppercase">{p.type} KEY</p>
-                     <p className={`text-[10px] font-mono ${isDarkMode ? 'text-blue-400' : 'text-blue-600'}`}>{p.key.substring(0,4)}****</p>
-                   </div>
-                   <span className="text-[7px] font-black uppercase text-emerald-500 px-1.5 py-0.5 bg-emerald-500/10 rounded">Active</span>
-                </div>
-              ))}
-            </div>
-          </div>
-
           <div className="space-y-1">
-            <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest px-1">PIN / Password (Saved Locally)</label>
+            <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest px-1">PIN / Password</label>
             <div className="flex gap-2">
               <input 
                 type="password"
@@ -197,13 +239,13 @@ const SettingsView: React.FC<SettingsViewProps> = ({ isDarkMode, onClearData }) 
             onClick={disconnectBroker}
             className="w-full py-4 rounded-2xl bg-rose-500/10 text-rose-500 text-[10px] font-black uppercase tracking-[0.2em] border border-rose-500/20"
           >
-            Terminate Session
+            Disconnect Session
           </button>
         </div>
       </div>
 
       <button onClick={onClearData} className="w-full py-4 bg-rose-500/10 text-rose-500 rounded-2xl text-[10px] font-black uppercase tracking-[0.2em] border border-rose-500/20">
-        Purge Signal DB
+        Purge Local Data
       </button>
 
       <StockChartModal 

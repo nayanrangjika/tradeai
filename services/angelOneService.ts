@@ -1,160 +1,162 @@
 
 import { BrokerCredentials } from "../types";
-import { WORLD_STOCKS, API_KEYS } from "../constants";
 
-const BASE_URL = "https://apiconnect.angelbroking.com";
-
-/**
- * Safe JSON parser to prevent "Unexpected end of JSON input" errors.
- */
-const safeJsonParse = (text: string) => {
-  if (!text || text.trim() === "" || text.startsWith("<!DOCTYPE")) {
-    return null;
+// Helper to determine the API URL.
+// 1. Checks LocalStorage for a user-override (set in Settings).
+// 2. Fallbacks to relative path "/api/bridge" which relies on Vite Proxy or Server routing.
+const getProxyUrl = () => {
+  const override = localStorage.getItem('ao_proxy_url_override');
+  if (override && override.startsWith('http')) {
+    // Ensure we don't double slash if user input is sloppy
+    return override.replace(/\/+$/, ''); 
   }
-  try {
-    return JSON.parse(text);
-  } catch (e) {
-    return null;
-  }
+  return "/api/bridge";
 };
 
-/**
- * Standard headers required by Angel One SmartAPI.
- * Prioritizes the API key tied to the active session.
- */
-const getStandardHeaders = (apiKeyOverride?: string, jwt?: string) => {
-  // CRITICAL: X-PrivateKey MUST match the API Key used to create the JWT session.
-  const activeKey = apiKeyOverride || localStorage.getItem('ao_api_key') || API_KEYS.TRADING;
-  
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-    'Accept': 'application/json',
-    'X-UserType': 'USER',
-    'X-SourceID': 'WEB',
-    'X-PrivateKey': activeKey,
-    'X-ClientLocalIP': '192.168.1.1',
-    'X-ClientPublicIP': '106.193.147.210',
-    'X-MACAddress': '02:00:00:00:00:00'
-  };
-  if (jwt) {
-    headers['Authorization'] = `Bearer ${jwt}`;
+const getHealthUrl = () => {
+  const override = localStorage.getItem('ao_proxy_url_override');
+  if (override && override.startsWith('http')) {
+    // If override is "http://localhost:8080/api/bridge", we want "http://localhost:8080/api/health"
+    // Heuristic: remove last segment if it is "bridge"
+    if (override.endsWith('/bridge')) {
+       return override.replace('/bridge', '/health');
+    }
+    return override + '/health';
   }
-  return headers;
+  return "/api/health";
 };
 
 export const angelOne = {
-  /**
-   * Performs a handshake with Angel One SmartAPI.
-   */
-  login: async (creds: { apiKey: string, clientCode: string, password: string, totp: string }): Promise<Partial<BrokerCredentials>> => {
+  checkHealth: async (): Promise<boolean> => {
+    // 1. Try Configured URL (default /api/health)
     try {
-      const response = await fetch(`${BASE_URL}/rest/auth/angelbroking/user/v1/loginByPassword`, {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 2000);
+      const res = await fetch(getHealthUrl(), { signal: controller.signal });
+      clearTimeout(timeoutId);
+      if (res.ok) return true;
+    } catch (e) { 
+      // Proceed to fallback
+    }
+
+    // 2. Fallback: Try Direct Localhost (Fix for broken Vite Proxy or missing Override)
+    // We only try this if the current config failed.
+    const fallbackUrl = "http://localhost:8080/api/health";
+    // Avoid double-checking if we just checked this exact URL
+    if (getHealthUrl() !== fallbackUrl) {
+      try {
+          console.log("Attempting fallback connection to localhost:8080...");
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 2000);
+          const res = await fetch(fallbackUrl, { signal: controller.signal });
+          clearTimeout(timeoutId);
+          
+          if (res.ok) {
+              console.log("Direct connection successful. Updating configuration.");
+              // Auto-fix the configuration for the user
+              localStorage.setItem('ao_proxy_url_override', 'http://localhost:8080/api/bridge');
+              return true;
+          }
+      } catch (e) { /* Fallback failed too */ }
+    }
+
+    return false;
+  },
+
+  login: async (creds: { apiKey: string, clientCode: string, password: string, totp: string }): Promise<Partial<BrokerCredentials>> => {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s strict timeout
+
+    try {
+      const response = await fetch(getProxyUrl(), {
         method: 'POST',
-        headers: getStandardHeaders(creds.apiKey),
+        headers: { 'Content-Type': 'application/json', 'X-PrivateKey': creds.apiKey },
         body: JSON.stringify({
-          clientcode: creds.clientCode.trim().toUpperCase(),
-          password: creds.password.trim(),
-          totp: creds.totp.trim()
-        })
+          action: 'login',
+          data: { clientcode: creds.clientCode, password: creds.password, totp: creds.totp }
+        }),
+        signal: controller.signal
       });
 
       const text = await response.text();
-      const json = safeJsonParse(text);
 
-      if (json && json.status === true && json.data) {
-        return {
-          jwtToken: json.data.jwtToken,
-          refreshToken: json.data.refreshToken,
-          feedToken: json.data.feedToken,
-          lastLogin: new Date().toISOString()
-        };
-      } else {
-        if (text.startsWith("<!")) {
-          throw new Error("CORS_BLOCKED");
+      if (!response.ok) {
+        let errorMsg = `Server Error: ${response.status}`;
+        try {
+          const errData = JSON.parse(text);
+          if (errData.message) errorMsg = errData.message;
+        } catch {}
+        // Append partial response text if not JSON for debugging
+        if (!errorMsg.includes(text) && text.length < 100) {
+           errorMsg += ` (${text})`; 
         }
-        const errorCode = json?.errorcode ? ` [${json.errorcode}]` : "";
-        const apiMessage = (json?.message || `Handshake Error ${response.status}`) + errorCode;
-        throw new Error(apiMessage);
+        throw new Error(errorMsg);
+      }
+
+      if (!text) {
+        throw new Error("Empty response from Bridge Server. Check server console.");
+      }
+
+      let json;
+      try {
+        json = JSON.parse(text);
+      } catch (e) {
+        throw new Error(`Invalid JSON received: "${text.substring(0, 30)}..."`);
+      }
+      
+      // SmartAPI specific success check
+      if (json.status === true && json.data) {
+        return { jwtToken: json.data.jwtToken, lastLogin: new Date().toISOString() };
+      } else {
+        // SmartAPI returns 200 OK but status: false for logic errors (invalid pass, etc)
+        throw new Error(json.message || "Invalid Credentials or API Key");
       }
     } catch (e: any) {
-      if (e.message === "CORS_BLOCKED") {
-        throw new Error("CORS Blocked: Enable 'Allow CORS' extension to bridge with Angel One.");
+      console.error("Login Failed:", e);
+      if (e.name === 'AbortError') {
+        throw new Error("Connection Timeout. Is 'npm run server' running?");
+      }
+      // Check if it's a network error (server not running)
+      if (e.message.includes('Failed to fetch') || e.message.includes('NetworkError') || e.message.includes('Connection refused')) {
+        throw new Error("Bridge Offline. Ensure 'npm run server' is active.");
       }
       throw e;
+    } finally {
+      clearTimeout(timeoutId);
     }
   },
 
-  /**
-   * Fetches the Last Traded Price (LTP).
-   */
-  getLTP: async (token: string, symbol: string, jwt: string, apiKey?: string): Promise<number> => {
+  getLTP: async (token: string, symbol: string, jwt: string, apiKey: string): Promise<number> => {
     try {
-      const response = await fetch(`${BASE_URL}/rest/market/data/v1/ltp`, {
+      const response = await fetch(getProxyUrl(), {
         method: 'POST',
-        headers: getStandardHeaders(apiKey, jwt),
-        body: JSON.stringify({ exchange: "NSE", tradingsymbol: symbol, symboltoken: token })
+        headers: { 'Content-Type': 'application/json', 'X-PrivateKey': apiKey, 'Authorization': `Bearer ${jwt}` },
+        body: JSON.stringify({ action: 'ltp', data: { exchange: "NSE", tradingsymbol: symbol, symboltoken: token } })
       });
-
-      const text = await response.text();
-      const json = safeJsonParse(text);
-      if (json?.status && json?.data?.ltp) {
-        return parseFloat(json.data.ltp);
-      }
-      return 0;
-    } catch (e) {
-      console.error("LTP Fetch Error:", e);
-      return 0;
-    }
+      const json = await response.json();
+      return json.data?.ltp ? parseFloat(json.data.ltp) : 0;
+    } catch { return 0; }
   },
 
-  /**
-   * Fetches historical candle data.
-   */
   getHistoricalData: async (token: string, interval: string, apiKey: string, jwt: string, customFrom?: string, customTo?: string) => {
+    const format = (d: Date) => d.toISOString().split('T')[0] + " " + d.toTimeString().split(' ')[0].substring(0, 5);
+    const fromdate = customFrom || format(new Date(Date.now() - 86400000 * 3));
+    const todate = customTo || format(new Date());
+
     try {
-      const formatAngelDate = (d: Date) => {
-        const datePart = d.toISOString().split('T')[0];
-        const timePart = d.toTimeString().split(' ')[0].substring(0, 5);
-        return `${datePart} ${timePart}`;
-      };
-
-      const fromdate = customFrom || formatAngelDate(new Date(Date.now() - 86400000 * 3)); 
-      const todate = customTo || formatAngelDate(new Date());
-
-      // Use the provided API Key or fallback to session key
-      const response = await fetch(`${BASE_URL}/rest/ms/api/v1/data/chart/fetchData`, {
+      const response = await fetch(getProxyUrl(), {
         method: 'POST',
-        headers: getStandardHeaders(apiKey, jwt),
+        headers: { 'Content-Type': 'application/json', 'X-PrivateKey': apiKey, 'Authorization': `Bearer ${jwt}` },
         body: JSON.stringify({
-          exchange: "NSE",
-          symboltoken: token,
-          interval: interval || "FIFTEEN_MINUTE",
-          fromdate,
-          todate
+          action: 'history',
+          data: { exchange: "NSE", symboltoken: token, interval, fromdate, todate }
         })
       });
-
-      const text = await response.text();
-      const json = safeJsonParse(text);
-
-      if (json && json.status && json.data && json.data.length > 0) {
-        return json.data.map((item: any[]) => ({
-          time: Math.floor(new Date(item[0]).getTime() / 1000),
-          open: parseFloat(item[1]),
-          high: parseFloat(item[2]),
-          low: parseFloat(item[3]),
-          close: parseFloat(item[4]),
-        }));
-      }
-      
-      if (json && json.status && (!json.data || json.data.length === 0)) {
-        console.warn(`[AngelOne] Historical payload empty for ${token}. Likely off-market hours or invalid range.`);
-      }
-      
-      return null;
+      const json = await response.json();
+      return json.data?.map((i: any[]) => ({ time: Math.floor(new Date(i[0]).getTime() / 1000), open: i[1], high: i[2], low: i[3], close: i[4] })) || [];
     } catch (e) {
-      console.error("Historical Data Exception:", e);
-      return null;
+      console.error("History Fetch Error:", e);
+      return [];
     }
   }
 };

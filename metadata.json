@@ -1,7 +1,7 @@
 {
-  "name": "FuronLabs - Automated Stock Trading Advisor",
-  "description": "An AI-powered mobile-first dashboard providing automated stock market signals for Nifty 50, using Gemini for technical analysis.",
   "requestFramePermissions": [
     "geolocation"
-  ]
+  ],
+  "name": "FuronLabs - Automated Stock Trading Advisor",
+  "description": ""
 }

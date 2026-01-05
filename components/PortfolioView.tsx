@@ -2,6 +2,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { PortfolioItem } from '../types';
 import { fetchLivePrice } from '../services/stockService';
+import StockChartModal from './StockChartModal';
 
 interface PortfolioViewProps {
   items: PortfolioItem[];
@@ -15,6 +16,7 @@ const PortfolioView: React.FC<PortfolioViewProps> = ({ items, isDarkMode, onAddI
   const [symbol, setSymbol] = useState('');
   const [price, setPrice] = useState('');
   const [qty, setQty] = useState('');
+  const [chartSymbol, setChartSymbol] = useState<string | null>(null);
   
   const [livePrices, setLivePrices] = useState<Record<string, { current: number; prev: number }>>({});
   const pollingRef = useRef<number | null>(null);
@@ -28,11 +30,13 @@ const PortfolioView: React.FC<PortfolioViewProps> = ({ items, isDarkMode, onAddI
       await Promise.all(items.map(async (item) => {
         try {
           const newPrice = await fetchLivePrice(item.symbol);
-          const prevPrice = priceUpdates[item.symbol]?.current || item.avgPrice;
-          priceUpdates[item.symbol] = {
-            current: newPrice,
-            prev: prevPrice
-          };
+          if (newPrice > 0) {
+            const prevPrice = priceUpdates[item.symbol]?.current || item.avgPrice;
+            priceUpdates[item.symbol] = {
+              current: newPrice,
+              prev: prevPrice
+            };
+          }
         } catch (err) {
           console.error(`Failed to fetch price for ${item.symbol}`, err);
         }
@@ -41,15 +45,14 @@ const PortfolioView: React.FC<PortfolioViewProps> = ({ items, isDarkMode, onAddI
       setLivePrices(priceUpdates);
     };
 
-    updatePrices();
-    pollingRef.current = window.setInterval(updatePrices, 5000);
+    updatePrices(); // Initial fetch
+    pollingRef.current = window.setInterval(updatePrices, 5000); // 5s Poll
 
     return () => {
       if (pollingRef.current) clearInterval(pollingRef.current);
     };
   }, [items.length]);
 
-  // Fix: Defined the missing handleAdd function to process new portfolio entries.
   const handleAdd = () => {
     if (!symbol || !price || !qty) return;
     onAddItem({
@@ -86,7 +89,8 @@ const PortfolioView: React.FC<PortfolioViewProps> = ({ items, isDarkMode, onAddI
   const totalPLPercent = totalCost > 0 ? (totalPL / totalCost) * 100 : 0;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 animate-fade">
+      {/* HEADER CARD */}
       <div className={`p-6 rounded-3xl border relative overflow-hidden ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-100 shadow-xl shadow-slate-200/50'}`}>
         <div className="absolute -top-10 -right-10 w-32 h-32 bg-blue-500/10 blur-3xl rounded-full"></div>
         
@@ -122,6 +126,7 @@ const PortfolioView: React.FC<PortfolioViewProps> = ({ items, isDarkMode, onAddI
         </div>
       </div>
 
+      {/* CONTROLS */}
       <div className="flex justify-between items-center">
         <h2 className={`text-xl font-bold ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>
           Live Holdings <span className="text-xs text-slate-500 ml-1 font-medium">({items.length})</span>
@@ -134,15 +139,16 @@ const PortfolioView: React.FC<PortfolioViewProps> = ({ items, isDarkMode, onAddI
         </button>
       </div>
 
+      {/* ADD FORM */}
       {showAdd && (
         <div className={`p-5 rounded-2xl border animate-modal ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200 shadow-xl'}`}>
           <div className="grid grid-cols-2 gap-4 mb-4">
             <div className="col-span-2">
-              <label className="text-[10px] font-bold text-slate-500 uppercase mb-1 block">Stock Symbol</label>
+              <label className="text-[10px] font-bold text-slate-500 uppercase mb-1 block">Stock Symbol (NSE)</label>
               <input 
                 value={symbol}
                 onChange={e => setSymbol(e.target.value)}
-                placeholder="RELIANCE, HDFCBANK, etc."
+                placeholder="RELIANCE-EQ, SWIGGY-EQ"
                 className={`w-full p-3 rounded-xl text-sm border focus:ring-2 focus:ring-blue-500 outline-none transition-all ${isDarkMode ? 'bg-slate-800 border-slate-700 text-white' : 'bg-slate-50 border-slate-200 text-slate-900'}`}
               />
             </div>
@@ -176,6 +182,7 @@ const PortfolioView: React.FC<PortfolioViewProps> = ({ items, isDarkMode, onAddI
         </div>
       )}
 
+      {/* ASSET LIST */}
       {items.length === 0 ? (
         <div className={`p-12 rounded-3xl border-2 border-dashed flex flex-col items-center text-center ${isDarkMode ? 'border-slate-800 bg-slate-900/20' : 'border-slate-200 bg-slate-50'}`}>
           <div className="w-12 h-12 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center mb-4">
@@ -198,10 +205,7 @@ const PortfolioView: React.FC<PortfolioViewProps> = ({ items, isDarkMode, onAddI
                   <div className="flex items-center gap-2 mb-1">
                     <h4 className={`text-base font-black tracking-tight ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>{item.symbol}</h4>
                     <span className="text-[8px] px-1.5 py-0.5 rounded-md bg-blue-500/10 text-blue-500 font-black uppercase">QTY {item.quantity}</span>
-                    <div className="flex items-center gap-1">
-                       <span className="w-1 h-1 rounded-full bg-emerald-500 animate-pulse"></span>
-                       <span className="text-[7px] font-black text-emerald-500 uppercase tracking-tighter">API Live</span>
-                    </div>
+                    <button onClick={() => setChartSymbol(item.symbol)} className="text-[8px] px-1.5 py-0.5 rounded-md border border-slate-600 text-slate-400 hover:text-white hover:border-white transition-colors uppercase font-bold">Chart</button>
                   </div>
                   <div className="flex gap-4">
                     <div className="flex flex-col">
@@ -239,6 +243,15 @@ const PortfolioView: React.FC<PortfolioViewProps> = ({ items, isDarkMode, onAddI
             );
           })}
         </div>
+      )}
+
+      {chartSymbol && (
+        <StockChartModal 
+          symbol={chartSymbol} 
+          isOpen={!!chartSymbol} 
+          onClose={() => setChartSymbol(null)} 
+          isDarkMode={isDarkMode} 
+        />
       )}
       
       <p className="text-[8px] text-center text-slate-500 font-bold uppercase tracking-widest opacity-50">Synchronized with Angel One Production Gateway</p>
