@@ -10,6 +10,7 @@ import PortfolioView from './components/PortfolioView';
 import SettingsView from './components/SettingsView';
 import StockChartModal from './components/StockChartModal';
 import NewsFeed from './components/NewsFeed';
+import TopPerformers from './components/TopPerformers';
 
 export default function App() {
   const [isConnected, setIsConnected] = useState(!!localStorage.getItem('ao_jwt'));
@@ -28,6 +29,17 @@ export default function App() {
   // Filters
   const [filterTimeframe, setFilterTimeframe] = useState<'ALL' | 'INTRADAY' | 'SWING'>('ALL');
   const [filterConfidence, setFilterConfidence] = useState<'ALL' | 'HIGH' | 'MEDIUM'>('ALL');
+
+  // Hard Refresh Session Clearing Logic
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+        // Clear the JWT session token when the window is about to unload (Refresh/Close)
+        // This forces a login on next load, fulfilling the "Clear session after every hard refresh" requirement.
+        localStorage.removeItem('ao_jwt');
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, []);
 
   useEffect(() => {
     if (isConnected) {
@@ -128,6 +140,9 @@ export default function App() {
                 </div>
               </div>
             )}
+            
+            {/* Top Performers Reel */}
+            <TopPerformers isDarkMode={isDarkMode} onChartClick={setActiveChartSymbol} />
 
             {/* Filter Bar */}
             <div className="flex gap-2 overflow-x-auto no-scrollbar pb-2">

@@ -19,8 +19,25 @@ export const angelOne = {
   },
 
   /**
+   * Resolve Scrip Token dynamically from Server Master
+   */
+  resolveToken: async (symbol: string, exchange: string = 'NSE'): Promise<string | null> => {
+    try {
+      const response = await fetch(`${API_BASE}/token`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ symbol, exchange })
+      });
+      const json = await response.json();
+      return json.token || null;
+    } catch (e) {
+      console.warn(`Token resolution failed for ${symbol}`, e);
+      return null;
+    }
+  },
+
+  /**
    * Login via Proxy
-   * Note: The server expects 'totpKey' (the secret) to generate the code server-side.
    */
   login: async (creds: { apiKey: string, clientCode: string, password: string, totp: string }): Promise<Partial<BrokerCredentials>> => {
     try {
@@ -30,21 +47,38 @@ export const angelOne = {
         body: JSON.stringify({
           clientCode: creds.clientCode,
           password: creds.password,
-          totpKey: creds.totp, // Sending SECRET, server generates OTP
+          otp: creds.totp, // Sending the 6-digit code calculated by client
           apiKey: creds.apiKey
         })
       });
 
       const json = await response.json();
 
+      if (!response.ok) {
+        throw new Error(json.message || json.error || `Server Error (${response.status})`);
+      }
+
+      // Check status field if it exists (SmartAPI returns it)
       if (json.status === false) {
         throw new Error(json.message || "Login Failed");
       }
       
-      if (json.jwtToken) {
-        return { jwtToken: json.jwtToken, lastLogin: new Date().toISOString() };
+      // SmartAPI response structure: { status: true, message: "...", data: { jwtToken: "..." } }
+      // We check multiple locations for robustness
+      const jwtToken = json.data?.jwtToken || json.jwtToken;
+      const refreshToken = json.data?.refreshToken || json.refreshToken;
+      const feedToken = json.data?.feedToken || json.feedToken;
+
+      if (jwtToken) {
+        return { 
+          jwtToken, 
+          refreshToken, 
+          feedToken, 
+          lastLogin: new Date().toISOString() 
+        };
       } else {
-        throw new Error("Invalid Session Data");
+        console.error("Missing JWT in response:", json);
+        throw new Error("Invalid Session Data: JWT Token missing from response");
       }
     } catch (e: any) {
       console.error("Login Proxy Error:", e);
@@ -52,6 +86,9 @@ export const angelOne = {
     }
   },
 
+  /**
+   * Get basic LTP (Number only)
+   */
   getLTP: async (token: string, symbol: string, jwt: string, apiKey: string): Promise<number> => {
     try {
       const response = await fetch(`${API_BASE}/ltp`, {
@@ -69,6 +106,44 @@ export const angelOne = {
     } catch (e) {
       console.error(`LTP Proxy Failed for ${symbol}:`, e);
       return 0;
+    }
+  },
+
+  /**
+   * Get Full Market Data (Price, Change, etc)
+   */
+  getMarketData: async (token: string, symbol: string, jwt: string, apiKey: string) => {
+    try {
+      const response = await fetch(`${API_BASE}/ltp`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          token, 
+          symbol, 
+          jwt, 
+          apiKey 
+        })
+      });
+      const json = await response.json();
+      
+      if (json.data) {
+        const ltp = parseFloat(json.data.ltp || 0);
+        const close = parseFloat(json.data.close || 0); // Previous Close
+        const change = close > 0 ? ((ltp - close) / close) * 100 : 0;
+        
+        return {
+          price: ltp,
+          change: change,
+          open: parseFloat(json.data.open || 0),
+          high: parseFloat(json.data.high || 0),
+          low: parseFloat(json.data.low || 0),
+          token: token
+        };
+      }
+      return null;
+    } catch (e) {
+      console.error(`Market Data Proxy Failed for ${symbol}:`, e);
+      return null;
     }
   },
 

@@ -62,21 +62,31 @@ const calculateIndicators = (candles: any[]) => {
 
 export const fetchLivePrice = async (symbol: string): Promise<number> => {
   const stock = NIFTY_50_STOCKS.find(s => s.symbol === symbol);
-  if (!stock) return 0;
+  // Default fallback if stock not in constant list, though usually it is.
+  const token = stock ? stock.token : '0'; 
 
   const jwt = localStorage.getItem('ao_jwt');
   const apiKey = localStorage.getItem('ao_api_key');
   
-  if (jwt && apiKey) {
+  if (jwt && apiKey && token !== '0') {
     try {
-      const price = await angelOne.getLTP(stock.token, symbol, jwt, apiKey);
+      // Try fetching live LTP first
+      const price = await angelOne.getLTP(token, symbol, jwt, apiKey);
+      
+      // If price is 0 (Market Closed / Data Issue), try fetching latest historical candle close
+      if (price === 0) {
+        const candles = await angelOne.getHistoricalData(token, "ONE_DAY", apiKey, jwt);
+        if (candles && candles.length > 0) {
+          return candles[candles.length - 1].close;
+        }
+      }
+      
       return price;
     } catch (e) {
       console.warn(`LTP Fetch Failed for ${symbol}`);
     }
   }
 
-  // RETURN 0 if no real data found. Do not return static base.
   return 0;
 };
 

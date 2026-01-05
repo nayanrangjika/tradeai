@@ -16,7 +16,9 @@ const SettingsView: React.FC<SettingsViewProps> = ({ isDarkMode, onClearData }) 
   const [swiggyPrice, setSwiggyPrice] = useState<{current: number, prev: number} | null>(null);
   const [isChartOpen, setIsChartOpen] = useState(false);
   const [hasCustomAiKey, setHasCustomAiKey] = useState(false);
+  const [manualAiKey, setManualAiKey] = useState('');
   const [aiStatus, setAiStatus] = useState<'IDLE' | 'TESTING' | 'HEALTHY' | 'EXHAUSTED' | 'ERROR'>('IDLE');
+  const [resolvedToken, setResolvedToken] = useState<string | null>(null);
   const market = getMarketStatus();
   
   const [brokerCreds, setBrokerCreds] = useState<BrokerCredentials>({
@@ -31,15 +33,38 @@ const SettingsView: React.FC<SettingsViewProps> = ({ isDarkMode, onClearData }) 
   const swiggyStock = WORLD_STOCKS.find(s => s.symbol === 'SWIGGY-EQ');
 
   useEffect(() => {
+    // Check if key exists in storage
+    const storedKey = localStorage.getItem('custom_gemini_key');
+    if (storedKey) {
+      setHasCustomAiKey(true);
+      setManualAiKey(storedKey);
+    }
+
+    // Also check the dynamic selection method
     const checkAiKey = async () => {
       if ((window as any).aistudio?.hasSelectedApiKey) {
         const hasKey = await (window as any).aistudio.hasSelectedApiKey();
-        setHasCustomAiKey(hasKey);
+        if(hasKey) setHasCustomAiKey(true);
       }
     };
     checkAiKey();
 
-    if (!isConnected || !swiggyStock) return;
+    // Resolve token once on mount if connected
+    const resolveSwiggyToken = async () => {
+      if (!isConnected || !swiggyStock) return;
+      
+      const token = await angelOne.resolveToken(swiggyStock.symbol);
+      if (token) {
+        setResolvedToken(token);
+      } else {
+        setResolvedToken(swiggyStock.token);
+      }
+    };
+    resolveSwiggyToken();
+  }, [isConnected, swiggyStock]);
+
+  useEffect(() => {
+    if (!isConnected || !swiggyStock || !resolvedToken) return;
 
     const fetchSwiggyPrice = async () => {
       const jwt = localStorage.getItem('ao_jwt');
@@ -47,19 +72,22 @@ const SettingsView: React.FC<SettingsViewProps> = ({ isDarkMode, onClearData }) 
       
       if (jwt) {
         try {
-          // This now goes through the Proxy, ensuring real data return
-          const price = await angelOne.getLTP(swiggyStock.token, swiggyStock.symbol, jwt, apiKey);
+          const price = await angelOne.getLTP(resolvedToken, swiggyStock.symbol, jwt, apiKey);
           if (price > 0) {
             setSwiggyPrice(prev => ({
               current: price,
               prev: prev?.current || price
             }));
-          } else {
-             setSwiggyPrice(null);
+          } else if (!swiggyPrice) {
+            // Fallback for market close
+             const candles = await angelOne.getHistoricalData(resolvedToken, "ONE_DAY", apiKey, jwt);
+             if (candles && candles.length > 0) {
+                const close = candles[candles.length - 1].close;
+                setSwiggyPrice({ current: close, prev: close });
+             }
           }
         } catch (e) {
           console.error("LTP fetch error:", e);
-          setSwiggyPrice(null);
         }
       }
     };
@@ -67,12 +95,13 @@ const SettingsView: React.FC<SettingsViewProps> = ({ isDarkMode, onClearData }) 
     fetchSwiggyPrice();
     const interval = setInterval(fetchSwiggyPrice, market.isOpen ? 5000 : 30000);
     return () => clearInterval(interval);
-  }, [isConnected, swiggyStock, market.isOpen]);
+  }, [isConnected, swiggyStock, market.isOpen, resolvedToken]);
 
   const testAiIntegrity = async () => {
     setAiStatus('TESTING');
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+      const aiKey = localStorage.getItem('custom_gemini_key') || process.env.API_KEY;
+      const ai = new GoogleGenAI({ apiKey: aiKey });
       await ai.models.generateContent({
         model: 'gemini-3-flash-preview',
         contents: 'ping',
@@ -89,11 +118,30 @@ const SettingsView: React.FC<SettingsViewProps> = ({ isDarkMode, onClearData }) 
   };
 
   const handleUpdateAiKey = async () => {
+    // Support Google AI Studio automated selection
     if ((window as any).aistudio?.openSelectKey) {
       await (window as any).aistudio.openSelectKey();
       setHasCustomAiKey(true);
       setAiStatus('IDLE');
     }
+  };
+
+  const saveManualKey = () => {
+    if (manualAiKey.trim().length > 10) {
+      localStorage.setItem('custom_gemini_key', manualAiKey.trim());
+      setHasCustomAiKey(true);
+      setAiStatus('IDLE');
+      alert("Custom Gemini Key Saved.");
+    } else {
+      alert("Invalid API Key");
+    }
+  };
+
+  const clearManualKey = () => {
+    localStorage.removeItem('custom_gemini_key');
+    setManualAiKey('');
+    setHasCustomAiKey(false);
+    setAiStatus('IDLE');
   };
 
   const savePin = () => {
@@ -141,27 +189,46 @@ const SettingsView: React.FC<SettingsViewProps> = ({ isDarkMode, onClearData }) 
           </div>
         </div>
         
-        <p className={`text-[10px] leading-relaxed mb-6 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
-          Configure your personal Gemini API key to bypass default usage limits.
+        <p className={`text-[10px] leading-relaxed mb-4 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+          Enter your Gemini API key to remove rate limits. Keys are stored locally on your device.
         </p>
 
         <div className="space-y-3">
+          <div className="relative">
+             <input 
+               type="password"
+               value={manualAiKey}
+               onChange={(e) => setManualAiKey(e.target.value)}
+               placeholder="Paste Gemini API Key here..."
+               className={`w-full p-3 rounded-xl text-xs font-mono border outline-none focus:ring-2 focus:ring-blue-500 ${isDarkMode ? 'bg-slate-950 border-slate-800 text-slate-200' : 'bg-slate-50 border-slate-200 text-slate-800'}`}
+             />
+             {hasCustomAiKey && (
+               <button onClick={clearManualKey} className="absolute right-3 top-3 text-[9px] font-bold text-rose-500 uppercase hover:underline">Clear</button>
+             )}
+          </div>
+
           <div className="grid grid-cols-2 gap-3">
+            <button 
+              onClick={saveManualKey}
+              className={`py-3.5 rounded-2xl text-[9px] font-black uppercase tracking-widest transition-all border ${
+                isDarkMode ? 'bg-slate-800 border-slate-700 text-white' : 'bg-slate-100 border-slate-300 text-slate-900'
+              }`}
+            >
+              Save Manual Key
+            </button>
             <button 
               onClick={testAiIntegrity}
               disabled={aiStatus === 'TESTING'}
-              className={`py-3.5 rounded-2xl text-[9px] font-black uppercase tracking-widest transition-all border ${
-                isDarkMode ? 'bg-slate-950 border-slate-800 text-slate-400' : 'bg-slate-50 border-slate-200 text-slate-600'
-              }`}
-            >
-              {aiStatus === 'TESTING' ? 'Testing...' : 'Test Sync'}
-            </button>
-            <button 
-              onClick={handleUpdateAiKey}
               className="py-3.5 bg-blue-600 text-white text-[9px] font-black uppercase tracking-widest rounded-2xl shadow-lg shadow-blue-500/20 active:scale-95 transition-all"
             >
-              Update Key
+              {aiStatus === 'TESTING' ? 'Testing...' : 'Verify Key'}
             </button>
+          </div>
+          
+          <div className="text-center pt-2">
+             <button onClick={handleUpdateAiKey} className="text-[9px] font-bold text-slate-500 uppercase underline">
+               Or Select via Google Auth
+             </button>
           </div>
         </div>
       </div>
@@ -172,6 +239,7 @@ const SettingsView: React.FC<SettingsViewProps> = ({ isDarkMode, onClearData }) 
             <div>
               <p className="text-[9px] text-orange-500 font-black uppercase tracking-widest mb-1">Production Asset</p>
               <h3 className={`text-lg font-black ${isDarkMode ? 'text-slate-100' : 'text-slate-800'}`}>SWIGGY-EQ</h3>
+              <p className="text-[9px] text-slate-500 font-mono mt-1">Token: {resolvedToken || '---'}</p>
             </div>
             <button 
               onClick={() => setIsChartOpen(true)}
@@ -185,6 +253,14 @@ const SettingsView: React.FC<SettingsViewProps> = ({ isDarkMode, onClearData }) 
             <span className={`text-4xl font-black tracking-tighter ${priceColor} transition-colors duration-300`}>
               {swiggyPrice ? `₹${swiggyPrice.current.toLocaleString('en-IN', { minimumFractionDigits: 2 })}` : '---'}
             </span>
+            {swiggyPrice && (
+              <span className={`text-xs font-bold ${
+                 swiggyPrice.current > swiggyPrice.prev ? 'text-emerald-500' : 
+                 swiggyPrice.current < swiggyPrice.prev ? 'text-rose-500' : 'text-slate-500'
+              }`}>
+                {swiggyPrice.current > swiggyPrice.prev ? '▲' : swiggyPrice.current < swiggyPrice.prev ? '▼' : '•'}
+              </span>
+            )}
           </div>
         </div>
       )}

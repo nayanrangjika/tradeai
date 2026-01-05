@@ -72,7 +72,8 @@ const sha1 = (params: Uint8Array): Uint8Array => {
 const hmacSha1 = (key: Uint8Array, message: Uint8Array): Uint8Array => {
   let K = new Uint8Array(key);
   if (K.length > 64) {
-    K = sha1(K);
+    // Cast to any to avoid TS2322 (Uint8Array<ArrayBufferLike> vs Uint8Array<ArrayBuffer>)
+    K = sha1(K) as any;
   }
   if (K.length < 64) {
     const temp = new Uint8Array(64);

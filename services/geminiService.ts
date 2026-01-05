@@ -2,7 +2,11 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { TradeSignal, SignalTimeframe, MarketMood, NewsItem } from "../types";
 
-const getAiClient = () => new GoogleGenAI({ apiKey: process.env.API_KEY });
+const getAiClient = () => {
+  const customKey = localStorage.getItem('custom_gemini_key');
+  // Use custom key if available, otherwise fall back to environment variable
+  return new GoogleGenAI({ apiKey: customKey || process.env.API_KEY });
+};
 
 const SYSTEM_INSTRUCTION = `
 You are an AI-based stock trading assistant built strictly for educational analysis and paper trading.

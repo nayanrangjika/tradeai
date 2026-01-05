@@ -5,7 +5,8 @@ import axios from 'axios';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { SmartAPI } from 'smartapi-javascript';
-import { TOTP } from 'totp-generator';
+// Fix: Handle both default and named imports for totp-generator depending on version
+import * as TOTPGen from 'totp-generator';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -44,19 +45,49 @@ app.get('/api/health', (req, res) => {
 
 // --- ROUTE 1: LOGIN ---
 app.post('/api/login', async (req, res) => {
-    const { clientCode, password, totpKey, apiKey } = req.body;
+    const { clientCode, password, totpKey, otp, apiKey } = req.body;
     try {
         const smart_api = new SmartAPI({ api_key: apiKey });
-        const { otp } = await TOTP.generate(totpKey);
-        const data = await smart_api.generateSession(clientCode, password, otp);
         
+        let finalOtp = otp;
+        
+        // Only generate OTP if not provided and we have a secret key
+        if (!finalOtp && totpKey) {
+             try {
+                // Handle different import structures for totp-generator
+                const generator = (TOTPGen as any).TOTP?.generate || (TOTPGen as any).default?.generate || (TOTPGen as any).generate;
+                if (generator) {
+                    const result = generator(totpKey);
+                    finalOtp = typeof result === 'object' ? result.otp : result;
+                } else {
+                    console.error("TOTP Generator function not found in import");
+                }
+             } catch (err) {
+                 console.error("TOTP Generation failed:", err);
+             }
+        }
+
+        if (!finalOtp) {
+             return res.status(400).json({ status: false, message: "OTP is required (Manual or Secret)" });
+        }
+
+        console.log(`🔐 Attempting login for ${clientCode} with OTP length ${finalOtp.length}...`);
+        
+        // SmartAPI generateSession returns a promise
+        const data = await smart_api.generateSession(clientCode, password, finalOtp);
+        
+        // Check both data.status and data.data presence
         if (data.status) {
-            res.json(data.data);
+            console.log("✅ Login Successful");
+            // Return FULL data object so client can inspect structure
+            res.json(data);
         } else {
+            console.log("❌ Angel One Login Failed:", data.message);
             res.status(400).json(data);
         }
     } catch (e: any) {
-        res.status(500).json({ message: e.message });
+        console.error("❌ Server Login Exception:", e.message, e);
+        res.status(500).json({ message: e.message, error: e.toString() });
     }
 });
 
