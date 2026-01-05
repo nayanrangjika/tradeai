@@ -30,12 +30,10 @@ export default function AuthGate({ isDarkMode, onAuthenticated }: { isDarkMode: 
       if (isUp) {
           // Only log connection once to avoid spam
           setLogs(prev => prev.includes("> BRIDGE CONNECTED.") ? prev : [...prev.slice(-4), "> BRIDGE CONNECTED."]);
-      } else {
-          // Silent log or simple status update
       }
     };
     check();
-    const interval = setInterval(check, 5000);
+    const interval = setInterval(check, 3000); // Faster polling for better UX
     return () => clearInterval(interval);
   }, []);
 
@@ -64,10 +62,9 @@ export default function AuthGate({ isDarkMode, onAuthenticated }: { isDarkMode: 
 
   const handleSync = async () => {
     if (bridgeStatus === 'OFFLINE') {
-      // One last check before alerting user
       const isUp = await angelOne.checkHealth();
       if (!isUp) {
-          alert("Cannot Sync: Bridge Server is Offline.\n\nPlease run 'npm run server' in a separate terminal.");
+          alert("Cannot Sync: Bridge Server is Offline.\n\nPlease run 'npm run server' in a separate terminal to fix CORS issues.");
           return;
       }
       setBridgeStatus('ONLINE');
@@ -208,7 +205,7 @@ export default function AuthGate({ isDarkMode, onAuthenticated }: { isDarkMode: 
               }`}
             >
               <span className={`w-1.5 h-1.5 rounded-full ${bridgeStatus === 'ONLINE' ? 'bg-emerald-500 animate-pulse' : bridgeStatus === 'OFFLINE' ? 'bg-rose-500' : 'bg-slate-500'}`}></span>
-              {bridgeStatus === 'ONLINE' ? 'Bridge Online' : bridgeStatus === 'OFFLINE' ? 'Bridge Offline (Tap to Retry)' : 'Checking...'}
+              {bridgeStatus === 'ONLINE' ? 'BRIDGE CONNECTED' : bridgeStatus === 'OFFLINE' ? 'Bridge Offline (Tap to Retry)' : 'Checking...'}
             </button>
           </div>
 

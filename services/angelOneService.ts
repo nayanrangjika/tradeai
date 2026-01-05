@@ -7,13 +7,12 @@ const API_BASE = "/api";
 export const angelOne = {
   checkHealth: async (): Promise<boolean> => {
     try {
-      // Simple ping to see if proxy is reachable (using a lightweight call)
-      await fetch(`${API_BASE}/token`, { 
-        method: 'POST', 
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ symbol: 'SBIN-EQ' }) 
+      // Use dedicated health endpoint for lighter check
+      const response = await fetch(`${API_BASE}/health`, { 
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' }
       });
-      return true;
+      return response.ok;
     } catch {
       return false;
     }
