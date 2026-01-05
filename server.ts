@@ -13,21 +13,8 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 8080;
 
-// Enable CORS for your Cloud Run URL and Localhost
-const allowedOrigins = [
-    'http://localhost:5173',
-    'https://furonlabs-automated-stock-trading-advisor-380159937883.us-west1.run.app'
-];
-
-app.use(cors({
-    origin: function (origin, callback) {
-        if (!origin || allowedOrigins.indexOf(origin) !== -1) {
-            callback(null, true);
-        } else {
-            callback(new Error('Not allowed by CORS'));
-        }
-    }
-}) as any);
+// Enable Permissive CORS for MVP to ensure "Bridge Connected" status works across all local setups
+app.use(cors({ origin: true })); 
 
 app.use(express.json() as any);
 
@@ -50,6 +37,11 @@ async function loadScripMaster() {
     }
 }
 
+// --- ROUTE 0: HEALTH CHECK ---
+app.get('/api/health', (req, res) => {
+    res.json({ status: true, message: "Bridge Online" });
+});
+
 // --- ROUTE 1: LOGIN ---
 app.post('/api/login', async (req, res) => {
     const { clientCode, password, totpKey, apiKey } = req.body;
@@ -68,7 +60,7 @@ app.post('/api/login', async (req, res) => {
     }
 });
 
-// --- ROUTE 2: TOKEN LOOKUP (Fixes Wrong Price Issue) ---
+// --- ROUTE 2: TOKEN LOOKUP ---
 app.post('/api/token', async (req, res) => {
     const { symbol, exchange = 'NSE' } = req.body;
     await loadScripMaster(); // Ensure cache is loaded
@@ -89,7 +81,6 @@ app.post('/api/token', async (req, res) => {
 app.post('/api/ltp', async (req, res) => {
     const { token, symbol, jwt, apiKey } = req.body;
     
-    // Standard Angel Headers
     const headers = {
         'Authorization': `Bearer ${jwt}`,
         'Content-Type': 'application/json',
