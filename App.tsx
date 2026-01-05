@@ -1,41 +1,73 @@
 
 import React, { useState, useEffect } from 'react';
-import { SignalTimeframe, TradeSignal, MarketMood, PortfolioItem } from './types';
-import { getMarketMood, analyzeStock } from './services/geminiService';
+import { SignalTimeframe, TradeSignal, MarketMood, PortfolioItem, NewsItem, ConfidenceLevel } from './types';
+import { getMarketMood, analyzeStock, fetchMarketNews } from './services/geminiService';
+import { runMarketScanner } from './services/stockService';
 import { db } from './services/dbService';
 import AuthGate from './components/AuthGate';
 import TradeCard from './components/TradeCard';
 import PortfolioView from './components/PortfolioView';
 import SettingsView from './components/SettingsView';
+import StockChartModal from './components/StockChartModal';
+import NewsFeed from './components/NewsFeed';
 
 export default function App() {
   const [isConnected, setIsConnected] = useState(!!localStorage.getItem('ao_jwt'));
   const [isDarkMode, setIsDarkMode] = useState(true);
-  const [activeTab, setActiveTab] = useState<'home' | 'portfolio' | 'settings'>('home');
+  const [activeTab, setActiveTab] = useState<'home' | 'news' | 'portfolio' | 'settings'>('home');
   
   // Data State
   const [signals, setSignals] = useState<TradeSignal[]>([]);
   const [mood, setMood] = useState<MarketMood | null>(null);
+  const [news, setNews] = useState<NewsItem[]>([]);
   const [portfolio, setPortfolio] = useState<PortfolioItem[]>([]);
   const [isScanning, setIsScanning] = useState(false);
+  const [scanProgress, setScanProgress] = useState("Ready");
+  const [activeChartSymbol, setActiveChartSymbol] = useState<string | null>(null);
+
+  // Filters
+  const [filterTimeframe, setFilterTimeframe] = useState<'ALL' | 'INTRADAY' | 'SWING'>('ALL');
+  const [filterConfidence, setFilterConfidence] = useState<'ALL' | 'HIGH' | 'MEDIUM'>('ALL');
 
   useEffect(() => {
     if (isConnected) {
       setPortfolio(db.getPortfolio());
-      performScan();
+      startFullScan();
     }
   }, [isConnected]);
 
-  const performScan = async () => {
+  const startFullScan = async () => {
+    if (isScanning) return;
     setIsScanning(true);
+    setScanProgress("Analyzing Market Mood...");
+    
     try {
-      const moodRes = await getMarketMood();
+      // 1. Fetch Context
+      const [moodRes, newsRes] = await Promise.all([
+        getMarketMood(),
+        fetchMarketNews()
+      ]);
       setMood(moodRes);
+      setNews(newsRes);
+
+      // 2. Run Technical + AI Scanner
+      setScanProgress("Scanning Nifty 50...");
+      const newSignals = await runMarketScanner((msg) => setScanProgress(msg));
+      setSignals(prev => [...newSignals, ...prev].slice(0, 10)); // Keep latest 10
       
-      const res = await analyzeStock({ symbol: 'RELIANCE', price: 2980, rsi: 55 }, SignalTimeframe.INTRADAY);
-      if (res) setSignals([res]);
-    } finally { setIsScanning(false); }
+    } catch (e) {
+      console.error("Scan error", e);
+    } finally { 
+      setIsScanning(false); 
+      setScanProgress("Idle");
+    }
   };
+
+  const filteredSignals = signals.filter(s => {
+    if (filterTimeframe !== 'ALL' && s.timeframe !== filterTimeframe) return false;
+    if (filterConfidence !== 'ALL' && s.confidenceLevel.toUpperCase() !== filterConfidence) return false;
+    return true;
+  });
 
   const handleAddToPortfolio = (item: Omit<PortfolioItem, 'id' | 'dateAdded'>) => {
     const newItem: PortfolioItem = {
@@ -55,55 +87,115 @@ export default function App() {
   };
 
   const handleClearData = () => {
-    if(window.confirm("Are you sure? This will verify your connection settings but clear local cache.")) {
+    if(window.confirm("Purge local data cache?")) {
       db.clearAll();
       setPortfolio([]);
       setSignals([]);
-      alert("Local data purged.");
+      alert("System purged.");
     }
   };
 
   if (!isConnected) return <AuthGate isDarkMode={isDarkMode} onAuthenticated={() => setIsConnected(true)} />;
 
   return (
-    <div className={`min-h-screen pb-28 ${isDarkMode ? 'bg-slate-950 text-white' : 'bg-slate-50 text-slate-900'}`}>
-      <header className="sticky top-0 z-50 glass-effect border-b px-6 py-6 border-white/5">
+    <div className={`min-h-screen pb-28 ${isDarkMode ? 'bg-[#050505] text-white' : 'bg-slate-50 text-slate-900'}`}>
+      
+      {/* HEADER */}
+      <header className="sticky top-0 z-50 bg-[#050505]/80 border-b border-white/5 backdrop-blur-md px-6 py-4">
         <div className="max-w-md mx-auto flex justify-between items-center">
-          <h1 className="text-2xl font-black tracking-tighter">Furon<span className="text-blue-500">Labs</span></h1>
-          <button onClick={() => setIsDarkMode(!isDarkMode)} className="w-10 h-10 rounded-2xl flex items-center justify-center border border-white/10">{isDarkMode ? '🌞' : '🌙'}</button>
+          <div>
+            <h1 className="text-xl font-black tracking-tighter">FURON<span className="text-blue-500">LABS</span></h1>
+            <p className="text-[9px] font-mono text-slate-500 uppercase tracking-widest">Quant Terminal v2.1</p>
+          </div>
+          <button onClick={startFullScan} disabled={isScanning} className={`w-8 h-8 rounded-full border border-white/10 flex items-center justify-center ${isScanning ? 'animate-spin text-blue-500' : 'text-slate-400'}`}>
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+          </button>
         </div>
       </header>
 
-      <main className="max-w-md mx-auto p-6 space-y-6">
-        {/* VIEW: SIGNALS (HOME) */}
+      <main className="max-w-md mx-auto p-4 space-y-6">
+        
+        {/* VIEW: HOME (SIGNALS) */}
         {activeTab === 'home' && (
           <>
+            {/* Market Mood Ticker */}
             {mood && (
-              <div className="p-5 rounded-[2rem] bg-blue-600/5 border border-blue-600/10 animate-fade">
-                <div className="flex justify-between items-center mb-2">
-                  <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded-md ${mood.sentiment === 'Bullish' ? 'bg-emerald-500/20 text-emerald-500' : 'bg-amber-500/20 text-amber-500'}`}>{mood.sentiment} Outlook</span>
-                  <span className="text-[10px] font-black text-blue-500 uppercase tracking-widest">Neural Insight</span>
+              <div className="p-4 rounded-xl bg-slate-900/50 border border-slate-800 flex items-start gap-3">
+                <div className={`mt-1 w-2 h-2 rounded-full ${mood.sentiment === 'Bullish' ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'}`}></div>
+                <div>
+                  <h3 className={`text-[10px] font-black uppercase tracking-widest ${mood.sentiment === 'Bullish' ? 'text-emerald-500' : 'text-rose-500'}`}>{mood.sentiment} MARKET</h3>
+                  <p className="text-[11px] leading-tight text-slate-400 font-medium mt-1">{mood.summary}</p>
                 </div>
-                <p className="text-xs font-semibold leading-relaxed text-slate-400">{mood.summary}</p>
               </div>
             )}
 
-            <div className="flex justify-between items-center px-2">
-              <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">Alpha Signals</h3>
-              <span className="text-[10px] font-black text-blue-500 uppercase">{signals.length} ACTIVE</span>
+            {/* Filter Bar */}
+            <div className="flex gap-2 overflow-x-auto no-scrollbar pb-2">
+              {['ALL', 'INTRADAY', 'SWING'].map(tf => (
+                <button 
+                  key={tf}
+                  onClick={() => setFilterTimeframe(tf as any)}
+                  className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider border transition-all ${
+                    filterTimeframe === tf 
+                    ? 'bg-blue-600 border-blue-500 text-white' 
+                    : 'bg-slate-900 border-slate-800 text-slate-500'
+                  }`}
+                >
+                  {tf}
+                </button>
+              ))}
+              <div className="w-px bg-slate-800 mx-1"></div>
+              {['ALL', 'HIGH', 'MEDIUM'].map(conf => (
+                <button 
+                  key={conf}
+                  onClick={() => setFilterConfidence(conf as any)}
+                  className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider border transition-all ${
+                    filterConfidence === conf 
+                    ? 'bg-emerald-600/20 border-emerald-500 text-emerald-500' 
+                    : 'bg-slate-900 border-slate-800 text-slate-500'
+                  }`}
+                >
+                  {conf}
+                </button>
+              ))}
             </div>
 
-            {isScanning ? (
-              <div className="py-20 text-center animate-pulse">
-                <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full mx-auto mb-4 animate-spin"></div>
-                <p className="text-[10px] font-black text-blue-500 uppercase tracking-widest">Gauging Liquidity...</p>
-              </div>
-            ) : (
-              <div className="space-y-4">
-                {signals.map(s => <TradeCard key={s.id} signal={s} isDarkMode={isDarkMode} />)}
+            {/* Status Bar */}
+            {isScanning && (
+              <div className="px-4 py-2 rounded-lg bg-blue-500/10 border border-blue-500/20 text-center animate-pulse">
+                <p className="text-[10px] font-black text-blue-500 uppercase tracking-widest">{scanProgress}</p>
               </div>
             )}
+
+            {/* Signals Feed */}
+            <div className="space-y-4">
+              {filteredSignals.length === 0 && !isScanning ? (
+                <div className="py-20 text-center opacity-40">
+                  <div className="inline-block p-4 rounded-full bg-slate-900 mb-3">
+                    <svg className="w-6 h-6 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                  </div>
+                  <p className="text-xs font-bold text-slate-500 uppercase">No Signals Match Filter</p>
+                </div>
+              ) : (
+                filteredSignals.map(s => (
+                  <TradeCard 
+                    key={s.id} 
+                    signal={s} 
+                    isDarkMode={isDarkMode} 
+                    onShowChart={(sym) => setActiveChartSymbol(sym)}
+                  />
+                ))
+              )}
+            </div>
           </>
+        )}
+
+        {/* VIEW: NEWS */}
+        {activeTab === 'news' && (
+          <div className="space-y-4">
+            <h2 className="text-xl font-black text-white px-2">Market Intelligence</h2>
+            <NewsFeed news={news} isDarkMode={isDarkMode} />
+          </div>
         )}
 
         {/* VIEW: PORTFOLIO */}
@@ -125,32 +217,35 @@ export default function App() {
         )}
       </main>
 
-      {/* BOTTOM NAVIGATION */}
-      <nav className="fixed bottom-6 left-1/2 -translate-x-1/2 w-[90%] max-w-sm glass-effect rounded-[2.5rem] border px-6 py-4 flex justify-between items-center z-50 shadow-2xl backdrop-blur-xl bg-black/40">
-        <button 
-          onClick={() => setActiveTab('portfolio')}
-          className={`flex flex-col items-center gap-1 transition-colors ${activeTab === 'portfolio' ? 'text-blue-500' : 'text-slate-500'}`}
-        >
-          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
-          <span className="text-[8px] font-black uppercase tracking-wider">Holdings</span>
+      {/* DOCK */}
+      <nav className="fixed bottom-6 left-1/2 -translate-x-1/2 w-[90%] max-w-sm bg-[#0a0a0a]/90 backdrop-blur-xl border border-white/10 rounded-3xl px-6 py-4 flex justify-between items-center z-50 shadow-2xl shadow-black/50">
+        <button onClick={() => setActiveTab('home')} className={`flex flex-col items-center gap-1 ${activeTab === 'home' ? 'text-blue-500' : 'text-slate-600'}`}>
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" /></svg>
+          <span className="text-[8px] font-black uppercase">Signals</span>
         </button>
 
-        <button 
-          onClick={() => setActiveTab('home')}
-          className="w-14 h-14 bg-blue-600 rounded-full flex items-center justify-center -mt-10 border-4 border-slate-950 glow-blue text-white shadow-2xl relative"
-        >
-          {isScanning && <span className="absolute inset-0 rounded-full border-2 border-white/30 animate-ping"></span>}
-          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+        <button onClick={() => setActiveTab('news')} className={`flex flex-col items-center gap-1 ${activeTab === 'news' ? 'text-blue-500' : 'text-slate-600'}`}>
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9a2 2 0 00-2-2h-2m-4-3H9M7 16h6M7 8h6v4H7V8z" /></svg>
+          <span className="text-[8px] font-black uppercase">News</span>
         </button>
 
-        <button 
-          onClick={() => setActiveTab('settings')}
-          className={`flex flex-col items-center gap-1 transition-colors ${activeTab === 'settings' ? 'text-blue-500' : 'text-slate-500'}`}
-        >
-          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
-          <span className="text-[8px] font-black uppercase tracking-wider">System</span>
+        <button onClick={() => setActiveTab('portfolio')} className={`flex flex-col items-center gap-1 ${activeTab === 'portfolio' ? 'text-blue-500' : 'text-slate-600'}`}>
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z" /></svg>
+          <span className="text-[8px] font-black uppercase">Holdings</span>
+        </button>
+
+        <button onClick={() => setActiveTab('settings')} className={`flex flex-col items-center gap-1 ${activeTab === 'settings' ? 'text-blue-500' : 'text-slate-600'}`}>
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+          <span className="text-[8px] font-black uppercase">System</span>
         </button>
       </nav>
+
+      <StockChartModal 
+        symbol={activeChartSymbol || ''} 
+        isOpen={!!activeChartSymbol} 
+        onClose={() => setActiveChartSymbol(null)} 
+        isDarkMode={isDarkMode} 
+      />
     </div>
   );
 }

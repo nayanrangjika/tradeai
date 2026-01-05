@@ -22,24 +22,33 @@ export interface GroundingSource {
   snippet?: string;
 }
 
+export interface NewsItem {
+  id: string;
+  title: string;
+  summary: string;
+  source: string;
+  time: string;
+  sentiment: 'Positive' | 'Negative' | 'Neutral';
+  url?: string;
+}
+
 export interface TradeSignal {
   id: string;
   stock: string;
-  signal: SignalType;
-  timeframe: SignalTimeframe;
-  confidence: ConfidenceLevel;
-  confidenceScore: number;
-  riskPercentage: number;
-  entry_range: string;
+  tradeMode: 'Intraday' | 'Swing';
+  signal: 'BUY' | 'SELL' | 'NO TRADE';
+  entryPrice: string;
+  stopLoss: string;
   target: string;
-  target2?: string;
-  stop_loss: string;
-  reasoning: string;
-  predictionSummary: string;
+  riskRewardRatio: string;
+  confidenceScore: number;
+  confidenceLevel: 'High' | 'Medium' | 'Low';
+  newsImpact: 'Positive' | 'Negative' | 'Neutral';
+  reason: string; // Combined technical + news + risk explanation
   timestamp: string;
-  isTaken?: boolean;
-  feedback?: 'positive' | 'negative';
   sources?: GroundingSource[];
+  newsContext?: string;
+  timeframe?: SignalTimeframe;
 }
 
 export interface PortfolioItem {
@@ -56,7 +65,7 @@ export interface BrokerCredentials {
   clientCode: string;
   apiKey: string;
   apiSecret: string;
-  totp: string; // 6-digit code or Secret Seed
+  totp: string; 
   jwtToken?: string;
   refreshToken?: string;
   feedToken?: string;

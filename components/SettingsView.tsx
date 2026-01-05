@@ -17,7 +17,6 @@ const SettingsView: React.FC<SettingsViewProps> = ({ isDarkMode, onClearData }) 
   const [isChartOpen, setIsChartOpen] = useState(false);
   const [hasCustomAiKey, setHasCustomAiKey] = useState(false);
   const [aiStatus, setAiStatus] = useState<'IDLE' | 'TESTING' | 'HEALTHY' | 'EXHAUSTED' | 'ERROR'>('IDLE');
-  const [proxyUrl, setProxyUrl] = useState(localStorage.getItem('ao_proxy_url_override') || '');
   const market = getMarketStatus();
   
   const [brokerCreds, setBrokerCreds] = useState<BrokerCredentials>({
@@ -25,7 +24,7 @@ const SettingsView: React.FC<SettingsViewProps> = ({ isDarkMode, onClearData }) 
     clientCode: localStorage.getItem('ao_client_code') || 'S433867',
     apiKey: localStorage.getItem('ao_api_key') || API_KEYS.TRADING,
     apiSecret: '',
-    totp: localStorage.getItem('ao_password') || '2727', // Use PIN from user default
+    totp: localStorage.getItem('ao_password') || '2727', 
   });
   
   const isConnected = !!localStorage.getItem('ao_jwt');
@@ -44,17 +43,23 @@ const SettingsView: React.FC<SettingsViewProps> = ({ isDarkMode, onClearData }) 
 
     const fetchSwiggyPrice = async () => {
       const jwt = localStorage.getItem('ao_jwt');
+      const apiKey = localStorage.getItem('ao_api_key') || API_KEYS.MARKET;
+      
       if (jwt) {
         try {
-          const price = await angelOne.getLTP(swiggyStock.token, swiggyStock.symbol, jwt, API_KEYS.MARKET);
+          // This now goes through the Proxy, ensuring real data return
+          const price = await angelOne.getLTP(swiggyStock.token, swiggyStock.symbol, jwt, apiKey);
           if (price > 0) {
             setSwiggyPrice(prev => ({
               current: price,
               prev: prev?.current || price
             }));
+          } else {
+             setSwiggyPrice(null);
           }
         } catch (e) {
           console.error("LTP fetch error:", e);
+          setSwiggyPrice(null);
         }
       }
     };
@@ -96,16 +101,6 @@ const SettingsView: React.FC<SettingsViewProps> = ({ isDarkMode, onClearData }) 
     alert("PIN Updated.");
   };
 
-  const saveProxyUrl = () => {
-    if (proxyUrl.trim()) {
-      localStorage.setItem('ao_proxy_url_override', proxyUrl.trim());
-    } else {
-      localStorage.removeItem('ao_proxy_url_override');
-    }
-    alert("Proxy Settings Updated. System will re-sync.");
-    window.location.reload();
-  };
-
   const disconnectBroker = () => {
     localStorage.removeItem('ao_jwt');
     window.location.reload();
@@ -122,7 +117,7 @@ const SettingsView: React.FC<SettingsViewProps> = ({ isDarkMode, onClearData }) 
         <h2 className={`text-xl font-bold ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>System Settings</h2>
         <div className={`px-2.5 py-1 rounded-full text-[8px] font-black uppercase tracking-widest flex items-center gap-1.5 ${isConnected ? 'bg-emerald-500/10 text-emerald-500' : 'bg-slate-500/10 text-slate-500'}`}>
           <span className={`w-1.5 h-1.5 rounded-full ${isConnected ? 'bg-emerald-500 animate-pulse' : 'bg-slate-500'}`}></span>
-          {isConnected ? 'Bridge Active' : 'Bridge Offline'}
+          {isConnected ? 'Proxy Active' : 'Proxy Offline'}
         </div>
       </div>
 
@@ -171,30 +166,6 @@ const SettingsView: React.FC<SettingsViewProps> = ({ isDarkMode, onClearData }) 
         </div>
       </div>
 
-      <div className={`p-6 rounded-[2.5rem] border overflow-hidden relative ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200 shadow-xl'}`}>
-        <p className="text-[9px] text-emerald-500 font-black uppercase tracking-widest mb-1">Bridge Connectivity</p>
-        <h3 className={`text-lg font-black mb-4 ${isDarkMode ? 'text-slate-100' : 'text-slate-800'}`}>Cloud Bridge Settings</h3>
-        
-        <div className="space-y-3">
-          <div className="space-y-1">
-            <label className="text-[9px] font-black text-slate-500 uppercase tracking-widest px-1">Bridge Service URL</label>
-            <input 
-              type="text"
-              value={proxyUrl}
-              onChange={e => setProxyUrl(e.target.value)}
-              placeholder="https://furonlabs-automated-stock-trading-advisor-380159937883.us-west1.run.app"
-              className={`w-full p-3 rounded-xl text-[10px] border font-mono ${isDarkMode ? 'bg-slate-950 border-slate-800 text-blue-400' : 'bg-slate-50 border-slate-200 text-blue-600'}`}
-            />
-          </div>
-          <button 
-            onClick={saveProxyUrl}
-            className="w-full py-3.5 bg-slate-800 text-white text-[9px] font-black uppercase tracking-widest rounded-2xl active:scale-95 transition-all border border-slate-700"
-          >
-            Update Production Sync
-          </button>
-        </div>
-      </div>
-
       {isConnected && (
         <div className={`p-6 rounded-[2.5rem] border overflow-hidden relative ${isDarkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200 shadow-xl'}`}>
           <div className="flex justify-between items-start mb-4 relative z-10">
@@ -212,7 +183,7 @@ const SettingsView: React.FC<SettingsViewProps> = ({ isDarkMode, onClearData }) 
 
           <div className="flex items-baseline gap-2 relative z-10">
             <span className={`text-4xl font-black tracking-tighter ${priceColor} transition-colors duration-300`}>
-              ₹{swiggyPrice ? swiggyPrice.current.toLocaleString('en-IN', { minimumFractionDigits: 2 }) : '---'}
+              {swiggyPrice ? `₹${swiggyPrice.current.toLocaleString('en-IN', { minimumFractionDigits: 2 })}` : '---'}
             </span>
           </div>
         </div>

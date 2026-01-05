@@ -69,17 +69,18 @@ export const fetchLivePrice = async (symbol: string): Promise<number> => {
   
   if (jwt && apiKey) {
     try {
-      return await angelOne.getLTP(stock.token, symbol, jwt, apiKey);
+      const price = await angelOne.getLTP(stock.token, symbol, jwt, apiKey);
+      return price;
     } catch (e) {
       console.warn(`LTP Fetch Failed for ${symbol}`);
     }
   }
 
-  return stock.base || 0;
+  // RETURN 0 if no real data found. Do not return static base.
+  return 0;
 };
 
 export const fetchMarketMood = async (): Promise<MarketMood> => {
-  // Fix: getMarketMood in geminiService.ts takes 0 arguments. Removed local status and realNiftyData.
   return await getMarketMood();
 };
 
@@ -121,10 +122,9 @@ const fetchLiveStockData = async (symbol: string, token: string): Promise<StockD
 
 export const runMarketScanner = async (onProgress: (msg: string) => void): Promise<TradeSignal[]> => {
   const activeSignals: TradeSignal[] = [];
-  const savedFeedback = localStorage.getItem('furon_feedback_db');
-  const stockFeedbackMap = savedFeedback ? JSON.parse(savedFeedback) : {};
 
   onProgress("Initializing Production Bridge...");
+  // Scan specific liquid stocks
   const targetStocks = NIFTY_50_STOCKS.slice(0, 6);
   
   for (const stock of targetStocks) {
@@ -132,18 +132,16 @@ export const runMarketScanner = async (onProgress: (msg: string) => void): Promi
     const data = await fetchLiveStockData(stock.symbol, stock.token);
     
     if (!data) {
-      onProgress(`Sync Error: ${stock.symbol}`);
+      onProgress(`Sync Error: ${stock.symbol} (No Data)`);
       continue;
     }
 
     onProgress(`Neural Analysis: ${stock.symbol}...`);
     
     try {
-      // Fix: analyzeStock in geminiService.ts takes 2 arguments. Removed unused feedbackHistory.
       const intradaySignal = await analyzeStock(data, SignalTimeframe.INTRADAY);
       if (intradaySignal) activeSignals.push(intradaySignal);
 
-      // Fix: analyzeStock in geminiService.ts takes 2 arguments. Removed unused feedbackHistory.
       const swingSignal = await analyzeStock(data, SignalTimeframe.SWING);
       if (swingSignal) activeSignals.push(swingSignal);
     } catch (e) {

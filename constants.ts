@@ -9,22 +9,17 @@ export const API_KEYS = {
 };
 
 export const WORLD_STOCKS = [
-  // Indian Giants (NSE) - Real World Base Prices for grounding
-  // Note: NSE Equity symbols require -EQ suffix for SmartAPI LTP/Historical calls
+  // Indian Giants (NSE) - Top Liquid Stocks
   { symbol: 'RELIANCE-EQ', token: '2885', base: 2980, region: 'IN' },
   { symbol: 'TCS-EQ', token: '11536', base: 4120, region: 'IN' },
   { symbol: 'HDFCBANK-EQ', token: '1333', base: 1740, region: 'IN' },
   { symbol: 'SBIN-EQ', token: '3045', base: 780, region: 'IN' },
-  { symbol: 'SWIGGY-EQ', token: '13781', base: 508.45, region: 'IN' }, 
   { symbol: 'INFY-EQ', token: '1594', base: 1850, region: 'IN' },
   { symbol: 'ICICIBANK-EQ', token: '4963', base: 1250, region: 'IN' },
-  // Global Giants (US/Tech)
-  { symbol: 'AAPL', token: 'AAPL', base: 230, region: 'US' },
-  { symbol: 'NVDA', token: 'NVDA', base: 135, region: 'US' },
-  { symbol: 'TSLA', token: 'TSLA', base: 260, region: 'US' },
-  { symbol: 'MSFT', token: 'MSFT', base: 415, region: 'US' },
-  { symbol: 'GOOGL', token: 'GOOGL', base: 185, region: 'US' },
-  { symbol: 'AMZN', token: 'AMZN', base: 195, region: 'US' }
+  { symbol: 'TATAMOTORS-EQ', token: '3456', base: 980, region: 'IN' },
+  { symbol: 'ITC-EQ', token: '1660', base: 430, region: 'IN' },
+  { symbol: 'SWIGGY-EQ', token: '13781', base: 508.45, region: 'IN' }, 
+  { symbol: 'BHARTIARTL-EQ', token: '10604', base: 1400, region: 'IN' }
 ];
 
 export const NIFTY_50_STOCKS = WORLD_STOCKS;

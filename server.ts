@@ -4,6 +4,8 @@ import cors from 'cors';
 import axios from 'axios';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { SmartAPI } from 'smartapi-javascript';
+import { TOTP } from 'totp-generator';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -11,83 +13,149 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 8080;
 
-app.use(cors() as any);
+// Enable CORS for your Cloud Run URL and Localhost
+const allowedOrigins = [
+    'http://localhost:5173',
+    'https://furonlabs-automated-stock-trading-advisor-380159937883.us-west1.run.app'
+];
+
+app.use(cors({
+    origin: function (origin, callback) {
+        if (!origin || allowedOrigins.indexOf(origin) !== -1) {
+            callback(null, true);
+        } else {
+            callback(new Error('Not allowed by CORS'));
+        }
+    }
+}) as any);
+
 app.use(express.json() as any);
 
 const ANGEL_BASE_URL = "https://apiconnect.angelbroking.com";
 
-// Health Check Endpoint
-app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
-});
+// --- CACHE FOR TOKENS ---
+let SCRIP_MASTER_CACHE: any[] = [];
+const SCRIP_URL = 'https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json';
 
-app.post('/api/bridge', async (req, res) => {
-  const { action, data } = req.body;
-  
-  console.log(`[Bridge] Request: ${action}`);
-
-  if (!action) return res.status(400).json({ status: false, message: "Missing action" });
-
-  let apiPath = "";
-  switch (action) {
-    case "login": apiPath = "/rest/auth/angelbroking/user/v1/loginByPassword"; break;
-    case "ltp": apiPath = "/rest/market/data/v1/ltp"; break;
-    case "history": apiPath = "/rest/ms/api/v1/data/chart/fetchData"; break;
-    default: return res.status(400).json({ status: false, message: "Invalid action" });
-  }
-
-  const angelHeaders = {
-    "Content-Type": "application/json",
-    "Accept": "application/json",
-    "X-UserType": "USER",
-    "X-SourceID": "WEB",
-    "X-PrivateKey": req.headers["x-privatekey"] || "",
-    "X-ClientLocalIP": "127.0.0.1",
-    "X-ClientPublicIP": "127.0.0.1",
-    "X-MACAddress": "02:00:00:00:00:00"
-  };
-
-  if (req.headers["authorization"]) {
-    // @ts-ignore
-    angelHeaders["Authorization"] = req.headers["authorization"];
-  }
-
-  try {
-    const response = await axios({
-      method: "POST",
-      url: `${ANGEL_BASE_URL}${apiPath}`,
-      data: data || {}, // Ensure data object is passed correctly
-      headers: angelHeaders,
-      timeout: 15000
-    });
-    console.log(`[Bridge] Success: ${action} - ${response.status}`);
-    res.status(response.status).json(response.data);
-  } catch (error: any) {
-    console.error(`[Bridge] Error: ${action} - ${error.message}`);
-    
-    // Extract precise error from Angel One if available
-    const status = error.response?.status || 500;
-    const errBody = error.response?.data || { message: error.message };
-    
-    // Log detailed upstream error for debugging
-    if(error.response?.data) {
-        console.error(`[Bridge] Upstream Error Data:`, JSON.stringify(error.response.data));
+// --- HELPER: FETCH SCRIP MASTER ---
+async function loadScripMaster() {
+    if (SCRIP_MASTER_CACHE.length > 0) return;
+    console.log("📥 Downloading Angel One Scrip Master...");
+    try {
+        const { data } = await axios.get(SCRIP_URL);
+        SCRIP_MASTER_CACHE = data;
+        console.log(`✅ Loaded ${SCRIP_MASTER_CACHE.length} scrips.`);
+    } catch (e: any) {
+        console.error("❌ Failed to load Scrip Master:", e.message);
     }
+}
 
-    res.status(status).json(errBody);
-  }
+// --- ROUTE 1: LOGIN ---
+app.post('/api/login', async (req, res) => {
+    const { clientCode, password, totpKey, apiKey } = req.body;
+    try {
+        const smart_api = new SmartAPI({ api_key: apiKey });
+        const { otp } = await TOTP.generate(totpKey);
+        const data = await smart_api.generateSession(clientCode, password, otp);
+        
+        if (data.status) {
+            res.json(data.data);
+        } else {
+            res.status(400).json(data);
+        }
+    } catch (e: any) {
+        res.status(500).json({ message: e.message });
+    }
 });
 
-// Serve static files from the dist directory
-app.use(express.static(path.join(__dirname, 'dist')) as any);
+// --- ROUTE 2: TOKEN LOOKUP (Fixes Wrong Price Issue) ---
+app.post('/api/token', async (req, res) => {
+    const { symbol, exchange = 'NSE' } = req.body;
+    await loadScripMaster(); // Ensure cache is loaded
 
-// Handle React Router - Fallback to index.html for SPA navigation
+    const scrip = SCRIP_MASTER_CACHE.find((item: any) => 
+        item.symbol === symbol && item.exch_seg === exchange
+    );
+
+    if (scrip) {
+        console.log(`🔍 Found Token: ${symbol} -> ${scrip.token}`);
+        res.json({ token: scrip.token, symbol: scrip.symbol, name: scrip.name });
+    } else {
+        res.status(404).json({ message: "Stock not found in master list" });
+    }
+});
+
+// --- ROUTE 3: LIVE PRICE (LTP) ---
+app.post('/api/ltp', async (req, res) => {
+    const { token, symbol, jwt, apiKey } = req.body;
+    
+    // Standard Angel Headers
+    const headers = {
+        'Authorization': `Bearer ${jwt}`,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'X-UserType': 'USER',
+        'X-SourceID': 'WEB',
+        'X-ClientLocalIP': '127.0.0.1',
+        'X-ClientPublicIP': '127.0.0.1',
+        'X-MACAddress': 'MAC_ADDRESS',
+        'X-PrivateKey': apiKey
+    };
+
+    try {
+        const response = await axios.post(`${ANGEL_BASE_URL}/rest/market/data/v1/ltp`, {
+            exchange: "NSE",
+            tradingsymbol: symbol,
+            symboltoken: token
+        }, { headers });
+
+        res.json(response.data);
+    } catch (e: any) {
+        console.error("LTP Error:", e.response?.data || e.message);
+        res.status(500).json(e.response?.data || { message: e.message });
+    }
+});
+
+// --- ROUTE 4: HISTORICAL DATA ---
+app.post('/api/history', async (req, res) => {
+    const { token, interval, fromdate, todate, jwt, apiKey } = req.body;
+
+    const headers = {
+        'Authorization': `Bearer ${jwt}`,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'X-UserType': 'USER',
+        'X-SourceID': 'WEB',
+        'X-ClientLocalIP': '127.0.0.1',
+        'X-ClientPublicIP': '127.0.0.1',
+        'X-MACAddress': 'MAC_ADDRESS',
+        'X-PrivateKey': apiKey
+    };
+
+    try {
+        const response = await axios.post(`${ANGEL_BASE_URL}/rest/secure/angelbroking/historical/v1/getCandleData`, {
+            exchange: "NSE",
+            symboltoken: token,
+            interval: interval,
+            fromdate,
+            todate
+        }, { headers });
+
+        res.json(response.data);
+    } catch (e: any) {
+        console.error("History Error:", e.response?.data || e.message);
+        res.status(500).json(e.response?.data || { message: e.message });
+    }
+});
+
+// Serve static frontend
+app.use(express.static(path.join(__dirname, '../dist')) as any);
 app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, 'dist', 'index.html'));
+    res.sendFile(path.join(__dirname, '../dist', 'index.html'));
 });
 
-// Bind to 0.0.0.0 to allow access from all interfaces (important for containers/cloud)
 app.listen(Number(PORT), '0.0.0.0', () => {
-    console.log(`Furon Proxy running on port ${PORT}`);
-    console.log(`Health check available at http://localhost:${PORT}/api/health`);
+    console.log(`✅ Production Server running on port ${PORT}`);
+    // Pre-load scrip master on start to reduce latency
+    loadScripMaster();
 });
