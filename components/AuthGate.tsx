@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { angelOne } from '../services/angelOneService';
 import { API_KEYS } from '../constants';
-import { generateTotp } from '../utils/totpGenerator';
+import { TOTP } from 'totp-generator';
 
 export default function AuthGate({ isDarkMode, onAuthenticated }: { isDarkMode: boolean, onAuthenticated: () => void }) {
   const [creds, setCreds] = useState({ 
@@ -42,10 +42,10 @@ export default function AuthGate({ isDarkMode, onAuthenticated }: { isDarkMode: 
   // Live TOTP Preview
   useEffect(() => {
     if (!storedSecret) return;
-    const updateCode = () => {
+    const updateCode = async () => {
       try {
-        const code = generateTotp(storedSecret);
-        setLiveCode(code);
+        const { otp } = await TOTP.generate(storedSecret);
+        setLiveCode(otp);
       } catch (e) {
         setLiveCode('ERROR');
       }
@@ -67,7 +67,7 @@ export default function AuthGate({ isDarkMode, onAuthenticated }: { isDarkMode: 
       // One last check before alerting user
       const isUp = await angelOne.checkHealth();
       if (!isUp) {
-          alert("Cannot Sync: Bridge Server is Offline.\n\nPlease run 'npm run server' in a separate terminal.");
+          alert("Cannot Sync: Bridge Server is Offline.\\n\\nPlease run 'npm run server' in a separate terminal.");
           return;
       }
       setBridgeStatus('ONLINE');
@@ -93,14 +93,16 @@ export default function AuthGate({ isDarkMode, onAuthenticated }: { isDarkMode: 
         // User pasted a secret
         addLog("DETECTED SECRET KEY.");
         secretToSave = creds.totpInput;
-        finalTotp = generateTotp(secretToSave);
+        const { otp } = await TOTP.generate(secretToSave);
+        finalTotp = otp;
       } else if (creds.totpInput.length === 6) {
         // User entered a manual code
         finalTotp = creds.totpInput;
       } else if (storedSecret) {
         // Use stored secret
         addLog("USING SAVED SECRET...");
-        finalTotp = generateTotp(storedSecret);
+        const { otp } = await TOTP.generate(storedSecret);
+        finalTotp = otp;
       } else {
         setErrorField('totp');
         throw new Error("TOTP MISSING");
@@ -145,9 +147,9 @@ export default function AuthGate({ isDarkMode, onAuthenticated }: { isDarkMode: 
 
       // Check for timeout / offline specifically
       if (msg.includes('server') || msg.includes('Offline') || msg.includes('Timeout') || msg.includes('Failed to fetch')) {
-         alert(`Connection Failed: ${msg}\n\nMake sure you are running 'npm run server' in a separate terminal!`);
+         alert(`Connection Failed: ${msg}\\n\\nMake sure you are running 'npm run server' in a separate terminal!`);
       } else {
-         alert(`Login Failed: ${msg}\n\nPlease check your Client ID, Password, and API Key.`);
+         alert(`Login Failed: ${msg}\\n\\nPlease check your Client ID, Password, and API Key.`);
       }
     } finally { 
       setIsSyncing(false); 
@@ -192,7 +194,7 @@ export default function AuthGate({ isDarkMode, onAuthenticated }: { isDarkMode: 
             onClick={() => setShowSettings(!showSettings)}
             className="absolute top-0 right-0 p-2 text-slate-400 hover:text-blue-500 transition-colors"
           >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924-1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
           </button>
         </div>
 
