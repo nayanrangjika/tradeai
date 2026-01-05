@@ -133,31 +133,48 @@ const fetchLiveStockData = async (symbol: string, token: string): Promise<StockD
 export const runMarketScanner = async (onProgress: (msg: string) => void): Promise<TradeSignal[]> => {
   const activeSignals: TradeSignal[] = [];
 
-  onProgress("Initializing Production Bridge...");
+  onProgress("Initializing Parallel Bridge...");
+  
   // Scan specific liquid stocks
   const targetStocks = NIFTY_50_STOCKS.slice(0, 6);
   
-  for (const stock of targetStocks) {
-    onProgress(`Downloading history for ${stock.symbol}...`);
-    const data = await fetchLiveStockData(stock.symbol, stock.token);
-    
-    if (!data) {
-      onProgress(`Sync Error: ${stock.symbol} (No Data)`);
-      continue;
-    }
-
-    onProgress(`Neural Analysis: ${stock.symbol}...`);
-    
+  // 1. Fetch all stock data in parallel
+  onProgress("Fetching Market Data...");
+  const dataPromises = targetStocks.map(async (stock) => {
     try {
-      const intradaySignal = await analyzeStock(data, SignalTimeframe.INTRADAY);
-      if (intradaySignal) activeSignals.push(intradaySignal);
-
-      const swingSignal = await analyzeStock(data, SignalTimeframe.SWING);
-      if (swingSignal) activeSignals.push(swingSignal);
+      const data = await fetchLiveStockData(stock.symbol, stock.token);
+      return data;
     } catch (e) {
-      console.error(`AI Logic Error for ${stock.symbol}`, e);
+      return null;
     }
-  }
+  });
+
+  const allData = await Promise.all(dataPromises);
+  const validData = allData.filter(d => d !== null) as StockData[];
+
+  // 2. Run AI Analysis
+  // We can also parallelize this, but let's batch it to avoid rate limiting if using free tier
+  onProgress(`Neural Analysis on ${validData.length} Stocks...`);
+  
+  const analysisPromises = validData.map(async (data) => {
+    try {
+        const signals: TradeSignal[] = [];
+        const intradaySignal = await analyzeStock(data, SignalTimeframe.INTRADAY);
+        if (intradaySignal) signals.push(intradaySignal);
+        
+        // Optional: Run swing scan only if Intraday isn't found to save tokens, or run both.
+        // For speed, let's run both.
+        const swingSignal = await analyzeStock(data, SignalTimeframe.SWING);
+        if (swingSignal) signals.push(swingSignal);
+        
+        return signals;
+    } catch (e) {
+        return [];
+    }
+  });
+
+  const results = await Promise.all(analysisPromises);
+  results.forEach(res => activeSignals.push(...res));
   
   onProgress("Market Scan Complete");
   return activeSignals;

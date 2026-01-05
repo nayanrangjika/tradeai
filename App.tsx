@@ -14,6 +14,7 @@ import TopPerformers from './components/TopPerformers';
 
 export default function App() {
   const [isConnected, setIsConnected] = useState(!!localStorage.getItem('ao_jwt'));
+  // Default to true (Dark Mode), but check local storage if you want persistence later
   const [isDarkMode, setIsDarkMode] = useState(true);
   const [activeTab, setActiveTab] = useState<'home' | 'news' | 'portfolio' | 'settings'>('home');
   
@@ -33,13 +34,24 @@ export default function App() {
   // Hard Refresh Session Clearing Logic
   useEffect(() => {
     const handleBeforeUnload = () => {
-        // Clear the JWT session token when the window is about to unload (Refresh/Close)
-        // This forces a login on next load, fulfilling the "Clear session after every hard refresh" requirement.
         localStorage.removeItem('ao_jwt');
     };
     window.addEventListener('beforeunload', handleBeforeUnload);
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, []);
+
+  // Theme Effect
+  useEffect(() => {
+    if (isDarkMode) {
+      document.body.classList.add('dark');
+      document.body.classList.remove('light');
+      document.body.style.backgroundColor = '#020617';
+    } else {
+      document.body.classList.remove('dark');
+      document.body.classList.add('light');
+      document.body.style.backgroundColor = '#f8fafc';
+    }
+  }, [isDarkMode]);
 
   useEffect(() => {
     if (isConnected) {
@@ -63,7 +75,7 @@ export default function App() {
       setNews(newsRes);
 
       // 2. Run Technical + AI Scanner
-      setScanProgress("Scanning Nifty 50...");
+      setScanProgress("Parallel Scanning Nifty 50...");
       const newSignals = await runMarketScanner((msg) => setScanProgress(msg));
       setSignals(prev => [...newSignals, ...prev].slice(0, 10)); // Keep latest 10
       
@@ -113,15 +125,30 @@ export default function App() {
     <div className={`min-h-screen pb-28 ${isDarkMode ? 'bg-[#050505] text-white' : 'bg-slate-50 text-slate-900'}`}>
       
       {/* HEADER */}
-      <header className="sticky top-0 z-50 bg-[#050505]/80 border-b border-white/5 backdrop-blur-md px-6 py-4">
+      <header className={`sticky top-0 z-50 border-b backdrop-blur-md px-6 py-4 ${isDarkMode ? 'bg-[#050505]/80 border-white/5' : 'bg-white/80 border-slate-200'}`}>
         <div className="max-w-md mx-auto flex justify-between items-center">
           <div>
-            <h1 className="text-xl font-black tracking-tighter">FURON<span className="text-blue-500">LABS</span></h1>
+            <h1 className={`text-xl font-black tracking-tighter ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>FURON<span className="text-blue-500">LABS</span></h1>
             <p className="text-[9px] font-mono text-slate-500 uppercase tracking-widest">Quant Terminal v2.1</p>
           </div>
-          <button onClick={startFullScan} disabled={isScanning} className={`w-8 h-8 rounded-full border border-white/10 flex items-center justify-center ${isScanning ? 'animate-spin text-blue-500' : 'text-slate-400'}`}>
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
-          </button>
+          
+          <div className="flex items-center gap-3">
+            {/* Theme Toggle */}
+            <button 
+              onClick={() => setIsDarkMode(!isDarkMode)}
+              className={`p-2 rounded-full border transition-all ${isDarkMode ? 'bg-slate-900 border-slate-800 text-yellow-400' : 'bg-slate-100 border-slate-300 text-slate-600'}`}
+            >
+              {isDarkMode ? (
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" /></svg>
+              ) : (
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" /></svg>
+              )}
+            </button>
+
+            <button onClick={startFullScan} disabled={isScanning} className={`w-8 h-8 rounded-full border flex items-center justify-center ${isDarkMode ? 'border-white/10' : 'border-slate-300'} ${isScanning ? 'animate-spin text-blue-500' : 'text-slate-400'}`}>
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+            </button>
+          </div>
         </div>
       </header>
 
@@ -132,11 +159,11 @@ export default function App() {
           <>
             {/* Market Mood Ticker */}
             {mood && (
-              <div className="p-4 rounded-xl bg-slate-900/50 border border-slate-800 flex items-start gap-3">
+              <div className={`p-4 rounded-xl border flex items-start gap-3 ${isDarkMode ? 'bg-slate-900/50 border-slate-800' : 'bg-white border-slate-200 shadow-sm'}`}>
                 <div className={`mt-1 w-2 h-2 rounded-full ${mood.sentiment === 'Bullish' ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'}`}></div>
                 <div>
                   <h3 className={`text-[10px] font-black uppercase tracking-widest ${mood.sentiment === 'Bullish' ? 'text-emerald-500' : 'text-rose-500'}`}>{mood.sentiment} MARKET</h3>
-                  <p className="text-[11px] leading-tight text-slate-400 font-medium mt-1">{mood.summary}</p>
+                  <p className={`text-[11px] leading-tight font-medium mt-1 ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>{mood.summary}</p>
                 </div>
               </div>
             )}
@@ -153,13 +180,13 @@ export default function App() {
                   className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider border transition-all ${
                     filterTimeframe === tf 
                     ? 'bg-blue-600 border-blue-500 text-white' 
-                    : 'bg-slate-900 border-slate-800 text-slate-500'
+                    : (isDarkMode ? 'bg-slate-900 border-slate-800 text-slate-500' : 'bg-slate-100 border-slate-200 text-slate-500')
                   }`}
                 >
                   {tf}
                 </button>
               ))}
-              <div className="w-px bg-slate-800 mx-1"></div>
+              <div className={`w-px mx-1 ${isDarkMode ? 'bg-slate-800' : 'bg-slate-300'}`}></div>
               {['ALL', 'HIGH', 'MEDIUM'].map(conf => (
                 <button 
                   key={conf}
@@ -167,7 +194,7 @@ export default function App() {
                   className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider border transition-all ${
                     filterConfidence === conf 
                     ? 'bg-emerald-600/20 border-emerald-500 text-emerald-500' 
-                    : 'bg-slate-900 border-slate-800 text-slate-500'
+                    : (isDarkMode ? 'bg-slate-900 border-slate-800 text-slate-500' : 'bg-slate-100 border-slate-200 text-slate-500')
                   }`}
                 >
                   {conf}
@@ -186,7 +213,7 @@ export default function App() {
             <div className="space-y-4">
               {filteredSignals.length === 0 && !isScanning ? (
                 <div className="py-20 text-center opacity-40">
-                  <div className="inline-block p-4 rounded-full bg-slate-900 mb-3">
+                  <div className={`inline-block p-4 rounded-full mb-3 ${isDarkMode ? 'bg-slate-900' : 'bg-slate-200'}`}>
                     <svg className="w-6 h-6 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
                   </div>
                   <p className="text-xs font-bold text-slate-500 uppercase">No Signals Match Filter</p>
@@ -208,7 +235,7 @@ export default function App() {
         {/* VIEW: NEWS */}
         {activeTab === 'news' && (
           <div className="space-y-4">
-            <h2 className="text-xl font-black text-white px-2">Market Intelligence</h2>
+            <h2 className={`text-xl font-black px-2 ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>Market Intelligence</h2>
             <NewsFeed news={news} isDarkMode={isDarkMode} />
           </div>
         )}
@@ -233,7 +260,7 @@ export default function App() {
       </main>
 
       {/* DOCK */}
-      <nav className="fixed bottom-6 left-1/2 -translate-x-1/2 w-[90%] max-w-sm bg-[#0a0a0a]/90 backdrop-blur-xl border border-white/10 rounded-3xl px-6 py-4 flex justify-between items-center z-50 shadow-2xl shadow-black/50">
+      <nav className={`fixed bottom-6 left-1/2 -translate-x-1/2 w-[90%] max-w-sm backdrop-blur-xl border rounded-3xl px-6 py-4 flex justify-between items-center z-50 shadow-2xl ${isDarkMode ? 'bg-[#0a0a0a]/90 border-white/10 shadow-black/50' : 'bg-white/90 border-slate-200 shadow-slate-300/50'}`}>
         <button onClick={() => setActiveTab('home')} className={`flex flex-col items-center gap-1 ${activeTab === 'home' ? 'text-blue-500' : 'text-slate-600'}`}>
           <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" /></svg>
           <span className="text-[8px] font-black uppercase">Signals</span>

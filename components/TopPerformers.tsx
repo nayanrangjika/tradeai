@@ -15,6 +15,8 @@ const TopPerformers: React.FC<{ isDarkMode: boolean; onChartClick: (s: string) =
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    let isMounted = true;
+
     const fetchData = async () => {
       const jwt = localStorage.getItem('ao_jwt');
       const apiKey = localStorage.getItem('ao_api_key');
@@ -22,28 +24,47 @@ const TopPerformers: React.FC<{ isDarkMode: boolean; onChartClick: (s: string) =
 
       const results: Performer[] = [];
 
-      // Fetch parallel for performance
+      // Use Promise.all to fetch in parallel
       await Promise.all(WORLD_STOCKS.map(async (s) => {
-        const data = await angelOne.getMarketData(s.token, s.symbol, jwt, apiKey);
-        if (data) {
-          results.push({
-            symbol: s.symbol,
-            token: s.token,
-            price: data.price,
-            change: data.change
-          });
+        try {
+          // Attempt to get Market Data (which uses LTP endpoint, more robust than History)
+          let data = await angelOne.getMarketData(s.token, s.symbol, jwt, apiKey);
+          
+          // If default token failed (price 0), try resolving token dynamically
+          if (!data || data.price === 0) {
+             const newToken = await angelOne.resolveToken(s.symbol);
+             if (newToken && newToken !== s.token) {
+                 data = await angelOne.getMarketData(newToken, s.symbol, jwt, apiKey);
+             }
+          }
+
+          if (data && data.price > 0) {
+             results.push({
+               symbol: s.symbol,
+               token: data.token,
+               price: data.price,
+               change: data.change // Calculated from LTP response (LTP - Close / Close)
+             });
+          }
+        } catch (e) {
+          // Ignore failures for individual stocks
         }
       }));
 
-      // Sort by performance (highest change %)
-      const sorted = results.sort((a, b) => b.change - a.change);
-      setStocks(sorted);
-      setLoading(false);
+      if (isMounted) {
+        // Sort by performance (highest absolute change %) - show top movers
+        const sorted = results.sort((a, b) => Math.abs(b.change) - Math.abs(a.change));
+        setStocks(sorted);
+        setLoading(false);
+      }
     };
 
     fetchData();
-    const interval = setInterval(fetchData, 10000); // Refresh every 10s
-    return () => clearInterval(interval);
+    const interval = setInterval(fetchData, 15000); // Refresh every 15s
+    return () => {
+        isMounted = false;
+        clearInterval(interval);
+    };
   }, []);
 
   if (loading) return (
@@ -54,10 +75,17 @@ const TopPerformers: React.FC<{ isDarkMode: boolean; onChartClick: (s: string) =
     </div>
   );
 
+  if (stocks.length === 0) return (
+      <div className="px-4 py-4 opacity-50 text-xs text-center font-mono">
+        <p>Market Data Offline</p>
+        <p className="text-[8px]">Check Connection / Market Hours</p>
+      </div>
+  );
+
   return (
     <div className="space-y-3 mb-6">
       <div className="flex justify-between items-center px-2">
-         <h3 className={`text-xs font-black uppercase tracking-widest ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Top 10 Performers</h3>
+         <h3 className={`text-xs font-black uppercase tracking-widest ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Top Movers</h3>
          <span className="text-[9px] font-mono text-emerald-500 animate-pulse">LIVE FEED</span>
       </div>
       <div className="flex gap-3 overflow-x-auto no-scrollbar pb-2 px-2">

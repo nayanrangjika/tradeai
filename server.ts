@@ -155,17 +155,26 @@ app.post('/api/history', async (req, res) => {
     };
 
     try {
-        const response = await axios.post(`${ANGEL_BASE_URL}/rest/secure/angelbroking/historical/v1/getCandleData`, {
+        // Crucial Fix: symboltoken must be String. Axios might pass number if not cast.
+        const payload = {
             exchange: "NSE",
-            symboltoken: token,
+            symboltoken: String(token), 
             interval: interval,
             fromdate,
             todate
-        }, { headers });
+        };
+        
+        console.log(`Fetching History: ${token} [${interval}]`);
+
+        const response = await axios.post(`${ANGEL_BASE_URL}/rest/secure/angelbroking/historical/v1/getCandleData`, 
+            payload, 
+            { headers }
+        );
 
         res.json(response.data);
     } catch (e: any) {
-        console.error("History Error:", e.response?.data || e.message);
+        console.error("History Error:", e.response?.data?.message || e.message);
+        // Pass through the upstream error message for better debugging on frontend
         res.status(500).json(e.response?.data || { message: e.message });
     }
 });

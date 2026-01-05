@@ -15,17 +15,24 @@ const StockChartModal: React.FC<StockChartModalProps> = ({ symbol, isOpen, onClo
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const pollTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (!isOpen || !chartContainerRef.current) return;
 
     setIsLoading(true);
+    setErrorMsg(null);
     const jwt = localStorage.getItem('ao_jwt');
     const apiKey = localStorage.getItem('ao_api_key') || 'A3uaTHcN';
-    // Find stock token; default to SBIN if not found to avoid crash
+    
     const stock = WORLD_STOCKS.find(s => s.symbol === symbol);
-    const token = stock?.token || "3045";
+    let token = stock?.token || "3045"; 
+
+    if (chartRef.current) {
+        chartRef.current.remove();
+        chartRef.current = null;
+    }
 
     const chartOptions = {
       layout: {
@@ -61,27 +68,41 @@ const StockChartModal: React.FC<StockChartModalProps> = ({ symbol, isOpen, onClo
 
     const loadData = async () => {
       if (!jwt) {
+        setErrorMsg("Session Expired. Please reconnect.");
         setIsLoading(false);
         return;
       }
       
       try {
-        const data = await angelOne.getHistoricalData(token, "FIFTEEN_MINUTE", apiKey, jwt);
+        let data = await angelOne.getHistoricalData(token, "FIFTEEN_MINUTE", apiKey, jwt);
+
+        // Retry with resolved token if data is empty or null
+        if (!data || data.length === 0) {
+            console.warn(`Default token ${token} failed for ${symbol}, attempting resolve...`);
+            const resolved = await angelOne.resolveToken(symbol);
+            if (resolved && resolved !== token) {
+                token = resolved;
+                data = await angelOne.getHistoricalData(token, "FIFTEEN_MINUTE", apiKey, jwt);
+            }
+        }
 
         if (data && data.length > 0) {
-          candlestickSeries.setData(data);
+          const sortedData = data.sort((a: any, b: any) => a.time - b.time);
+          candlestickSeries.setData(sortedData);
           chart.timeScale().fitContent();
+          setErrorMsg(null);
+        } else {
+           setErrorMsg("Market Data Unavailable");
         }
-      } catch (e) {
+      } catch (e: any) {
         console.error("Chart load failed", e);
+        setErrorMsg("Data Feed Error");
       } finally {
         setIsLoading(false);
       }
     };
 
-    loadData();
-
-    // Auto-refresh chart data every minute to keep it "live"
+    setTimeout(loadData, 300);
     pollTimerRef.current = window.setInterval(loadData, 60000);
 
     const handleResize = () => {
@@ -95,7 +116,10 @@ const StockChartModal: React.FC<StockChartModalProps> = ({ symbol, isOpen, onClo
     return () => {
       window.removeEventListener('resize', handleResize);
       if (pollTimerRef.current) clearInterval(pollTimerRef.current);
-      chart.remove();
+      if (chartRef.current) {
+          chartRef.current.remove();
+          chartRef.current = null;
+      }
     };
   }, [isOpen, isDarkMode, symbol]);
 
@@ -107,7 +131,7 @@ const StockChartModal: React.FC<StockChartModalProps> = ({ symbol, isOpen, onClo
       onClick={(e) => e.target === e.currentTarget && onClose()}
     >
       <div 
-        className={`w-full max-w-2xl rounded-[2.5rem] shadow-2xl overflow-hidden animate-modal border ${isDarkMode ? 'bg-slate-950 border-white/5' : 'bg-white border-slate-100'}`}
+        className={`w-full max-w-2xl rounded-[2.5rem] shadow-2xl overflow-hidden animate-modal border ${isDarkMode ? 'bg-slate-950 border-white/5' : 'bg-white border-slate-200'}`}
         onClick={(e) => e.stopPropagation()}
       >
         <div className={`px-8 py-6 flex justify-between items-center border-b ${isDarkMode ? 'border-white/5' : 'border-slate-50'}`}>
@@ -120,19 +144,30 @@ const StockChartModal: React.FC<StockChartModalProps> = ({ symbol, isOpen, onClo
           </button>
         </div>
         
-        <div className="p-4 relative">
+        <div className={`p-4 relative ${isDarkMode ? 'bg-slate-950' : 'bg-white'}`}>
           {isLoading && (
-            <div className="absolute inset-0 z-10 flex items-center justify-center bg-slate-950/20 backdrop-blur-[2px]">
+            <div className={`absolute inset-0 z-10 flex items-center justify-center backdrop-blur-[2px] ${isDarkMode ? 'bg-slate-950/20' : 'bg-white/50'}`}>
               <div className="flex flex-col items-center gap-3">
                 <div className="w-8 h-8 border-4 border-orange-500 border-t-transparent rounded-full animate-spin"></div>
                 <p className="text-[9px] font-black text-orange-500 uppercase tracking-widest">Hydrating Chart...</p>
               </div>
             </div>
           )}
+          
+          {errorMsg && !isLoading && (
+             <div className="absolute inset-0 z-10 flex items-center justify-center">
+               <div className="text-center opacity-50">
+                 <p className="text-2xl font-black text-slate-700">NO SIGNAL</p>
+                 <p className="text-xs text-slate-500">{errorMsg}</p>
+                 <button onClick={() => onClose()} className="mt-4 px-4 py-2 bg-slate-800 text-white text-xs rounded-lg">Dismiss</button>
+               </div>
+             </div>
+          )}
+
           <div ref={chartContainerRef} className="w-full h-[400px]" />
         </div>
 
-        <div className={`px-8 py-6 border-t ${isDarkMode ? 'border-white/5 bg-slate-900/20' : 'border-slate-50 bg-slate-50/50'}`}>
+        <div className={`px-8 py-6 border-t ${isDarkMode ? 'border-white/5 bg-slate-900/20' : 'border-slate-100 bg-slate-50'}`}>
           <div className="flex justify-between items-center">
             <div className="flex items-center gap-4">
                <div className="flex flex-col">
